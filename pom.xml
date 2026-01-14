@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/> <!-- lookup parent from repository -->
+    </parent>
+    <groupId>cn.techwolf</groupId>
+    <artifactId>hotkey-parent</artifactId>
+    <version>1.0.0</version>
+    <packaging>pom</packaging>
+    <name>hotkey-parent</name>
+    <description>Redis热Key检测与本地缓存Spring Boot Starter</description>
+    
+    <properties>
+        <java.version>1.8</java.version>
+        <maven.compiler.source>1.8</maven.compiler.source>
+        <maven.compiler.target>1.8</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <caffeine.version>2.9.3</caffeine.version>
+    </properties>
+    
+    <modules>
+        <module>hotkey-core</module>
+        <module>hotkey-spring-boot-autoconfigure</module>
+        <module>hotkey-spring-boot-starter</module>
+    </modules>
+    
+    <dependencyManagement>
+        <dependencies>
+            <!-- Caffeine Cache -->
+            <dependency>
+                <groupId>com.github.ben-manes.caffeine</groupId>
+                <artifactId>caffeine</artifactId>
+                <version>${caffeine.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>
