@@ -1,5 +1,6 @@
 package cn.techwolf.datastar.hotkey.scheduler;
 
+import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
 import lombok.extern.slf4j.Slf4j;
 
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
@@ -42,6 +43,7 @@ public class SchedulerManager implements IScheduler {
      */
     private final IExceptionHandler exceptionHandler;
 
+    private final IAccessRecorder accessRecorder;
     /**
      * 定时任务执行器
      */
@@ -58,14 +60,13 @@ public class SchedulerManager implements IScheduler {
      * @param config 配置参数
      * @param hotKeyManager 热Key管理器
      * @param hotKeySelector 热Key选择器
+     * @param accessRecorder 访问记录器
      */
     public SchedulerManager(HotKeyConfig config,
                            IHotKeyManager hotKeyManager,
-                           IHotKeySelector hotKeySelector) {
-        this.config = config;
-        this.hotKeyManager = hotKeyManager;
-        this.hotKeySelector = hotKeySelector;
-        this.exceptionHandler = new DefaultExceptionHandler();
+                           IHotKeySelector hotKeySelector,
+                           IAccessRecorder accessRecorder) {
+        this(config, hotKeyManager, hotKeySelector, accessRecorder, null);
     }
 
     /**
@@ -74,15 +75,18 @@ public class SchedulerManager implements IScheduler {
      * @param config 配置参数
      * @param hotKeyManager 热Key管理器
      * @param hotKeySelector 热Key选择器
-     * @param exceptionHandler 异常处理器
+     * @param accessRecorder 访问记录器
+     * @param exceptionHandler 异常处理器（可选，为null时使用默认处理器）
      */
     public SchedulerManager(HotKeyConfig config,
                            IHotKeyManager hotKeyManager,
                            IHotKeySelector hotKeySelector,
+                           IAccessRecorder accessRecorder,
                            IExceptionHandler exceptionHandler) {
         this.config = config;
         this.hotKeyManager = hotKeyManager;
         this.hotKeySelector = hotKeySelector;
+        this.accessRecorder = accessRecorder;
         this.exceptionHandler = exceptionHandler != null ? exceptionHandler : new DefaultExceptionHandler();
     }
 
@@ -99,19 +103,27 @@ public class SchedulerManager implements IScheduler {
             return t;
         });
 
-        // 每5秒执行一次热Key晋升
+        // 启动热Key晋升任务
+        schedulePromotionTask();
+        
+        // 启动热Key降级和清理任务
+        scheduleDemotionTask();
+
+        running = true;
+        long promotionInterval = config.getDetection().getPromotionInterval();
+        long demotionInterval = config.getDetection().getDemotionInterval();
+        log.info("定时任务管理器已启动，晋升间隔: {}ms, 降级间隔: {}ms", promotionInterval, demotionInterval);
+    }
+
+    /**
+     * 启动热Key晋升任务
+     */
+    private void schedulePromotionTask() {
         long promotionInterval = config.getDetection().getPromotionInterval();
         scheduler.scheduleWithFixedDelay(
                 () -> {
                     try {
-                        // 1. 获取当前热Key列表
-                        Set<String> currentHotKeys = hotKeyManager.getHotKeys();
-                        // 2. 调用选择器计算应该晋升的key
-                        Set<String> newHotKeys = hotKeySelector.promoteHotKeys(currentHotKeys);
-                        // 3. 更新管理器中的热Key列表
-                        if (newHotKeys != null && !newHotKeys.isEmpty()) {
-                            hotKeyManager.promoteHotKeys(newHotKeys);
-                        }
+                        executePromotionTask();
                     } catch (Exception e) {
                         exceptionHandler.handleException("热Key晋升任务", e);
                     }
@@ -120,20 +132,31 @@ public class SchedulerManager implements IScheduler {
                 promotionInterval,
                 TimeUnit.MILLISECONDS
         );
+    }
 
-        // 每分钟执行一次降级和淘汰
+    /**
+     * 执行热Key晋升任务
+     */
+    private void executePromotionTask() {
+        // 1. 获取当前热Key列表
+        Set<String> currentHotKeys = hotKeyManager.getHotKeys();
+        // 2. 调用选择器计算应该晋升的key
+        Set<String> newHotKeys = hotKeySelector.promoteHotKeys(currentHotKeys);
+        // 3. 更新管理器中的热Key列表
+        if (newHotKeys != null && !newHotKeys.isEmpty()) {
+            hotKeyManager.promoteHotKeys(newHotKeys);
+        }
+    }
+
+    /**
+     * 启动热Key降级和清理任务
+     */
+    private void scheduleDemotionTask() {
         long demotionInterval = config.getDetection().getDemotionInterval();
         scheduler.scheduleWithFixedDelay(
                 () -> {
                     try {
-                        // 1. 获取当前热Key列表
-                        Set<String> currentHotKeys = hotKeyManager.getHotKeys();
-                        // 2. 调用选择器计算应该降级的key
-                        Set<String> removedKeys = hotKeySelector.demoteAndEvict(currentHotKeys);
-                        // 3. 更新管理器中的热Key列表（清理逻辑在 Manager 内部自动处理）
-                        if (removedKeys != null && !removedKeys.isEmpty()) {
-                            hotKeyManager.demoteHotKeys(removedKeys);
-                        }
+                        executeDemotionTask();
                     } catch (Exception e) {
                         exceptionHandler.handleException("热Key降级和淘汰任务", e);
                     }
@@ -142,9 +165,22 @@ public class SchedulerManager implements IScheduler {
                 demotionInterval,
                 TimeUnit.MILLISECONDS
         );
+    }
 
-        running = true;
-        log.info("定时任务管理器已启动，晋升间隔: {}ms, 降级间隔: {}ms", promotionInterval, demotionInterval);
+    /**
+     * 执行热Key降级和清理任务
+     */
+    private void executeDemotionTask() {
+        // 1. 获取当前热Key列表
+        Set<String> currentHotKeys = hotKeyManager.getHotKeys();
+        // 2. 调用选择器计算应该降级的key
+        Set<String> removedKeys = hotKeySelector.demoteAndEvict(currentHotKeys);
+        // 3. 更新管理器中的热Key列表（清理逻辑在 Manager 内部自动处理）
+        if (removedKeys != null && !removedKeys.isEmpty()) {
+            hotKeyManager.demoteHotKeys(removedKeys);
+        }
+        // 4. 清理过期和低QPS的访问记录（异步执行）
+        accessRecorder.cleanupKeys();
     }
 
     @Override

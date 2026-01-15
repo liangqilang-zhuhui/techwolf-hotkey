@@ -11,6 +11,10 @@ import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
 import cn.techwolf.datastar.hotkey.scheduler.IScheduler;
 import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
+import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitor;
+import cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor;
+import cn.techwolf.datastar.hotkey.monitor.HitRateStatistics;
+import cn.techwolf.datastar.hotkey.monitor.IHitRateStatistics;
 
 import java.util.function.Function;
 
@@ -55,6 +59,16 @@ public class HotKeyClient implements IHotKeyClient {
     private final IScheduler scheduler;
 
     /**
+     * 热Key监控器
+     */
+    private final HotKeyMonitor hotKeyMonitor;
+
+    /**
+     * 命中率统计器
+     */
+    private final IHitRateStatistics hitRateStatistics;
+
+    /**
      * 是否启用
      */
     private final boolean enabled;
@@ -92,6 +106,8 @@ public class HotKeyClient implements IHotKeyClient {
             this.hotKeyStorage = null;
             this.cacheDataUpdater = null;
             this.scheduler = null;
+            this.hotKeyMonitor = null;
+            this.hitRateStatistics = null;
             return;
         }
 
@@ -117,7 +133,13 @@ public class HotKeyClient implements IHotKeyClient {
         this.hotKeyManager = factory.createHotKeyManager(accessRecorder, hotKeyStorage, cacheDataUpdater);
 
         // 6. 初始化定时任务调度器
-        this.scheduler = factory.createScheduler(config, hotKeyManager, hotKeySelector);
+        this.scheduler = factory.createScheduler(config, hotKeyManager, hotKeySelector, accessRecorder);
+
+        // 7. 初始化命中率统计器
+        this.hitRateStatistics = new HitRateStatistics();
+
+        // 8. 初始化热Key监控器（传入统计器）
+        this.hotKeyMonitor = new HotKeyMonitor(hotKeyManager, hotKeyStorage, accessRecorder, cacheDataUpdater, config, hitRateStatistics);
 
         // 9. 启动定时任务和刷新服务
         startServices();
@@ -167,62 +189,61 @@ public class HotKeyClient implements IHotKeyClient {
     @Override
     public String wrapGet(String key, Function<String, String> redisGetter) {
         if (!enabled || key == null) {
-            // 如果未启用或key为空，直接调用Redis获取
-            if (log.isDebugEnabled()) {
-                log.debug("热Key客户端未启用或key为空，直接从Redis获取, key: {}", key);
-            }
             return redisGetter != null ? redisGetter.apply(key) : null;
+        }
+
+        // 0. 记录wrapGet调用统计
+        if (hitRateStatistics != null) {
+            hitRateStatistics.recordWrapGet(key);
         }
 
         // 1. 记录访问日志（用于热Key检测）
         recordAccess(key);
 
-        // 2. 判断是否为热Key（需要多次检查，避免竞态条件）
-        boolean isHotKey = isHotKey(key);
-        if (log.isDebugEnabled()) {
-            log.debug("开始获取key, key: {}, 是否为热Key: {}", key, isHotKey);
-        }
+        // 2. 检查是否为热Key（只检查一次，避免重复检查）
+        boolean isHot = isHotKey(key);
         
-        // 3. 如果是热Key，注册数据获取回调函数并尝试从缓存获取
-        if (isHotKey) {
+        // 3. 如果是热Key，尝试从缓存获取
+        if (isHot) {
+            // 记录热Key访问
+            if (hitRateStatistics != null) {
+                hitRateStatistics.recordHotKeyAccess();
+            }
+            
             // 注册数据获取回调函数到缓存数据更新器，用于自动刷新
             cacheDataUpdater.register(key, redisGetter);
-            // 重新检查是否为热Key（避免在注册过程中被降级）
-            if (isHotKey(key)) {
-                String cachedValue = getFromCache(key);
-                if (cachedValue != null) {
-                    // 缓存命中，直接返回
-                    if (log.isDebugEnabled()) {
-                        log.debug("从本地缓存获取成功, key: {}, value: {}", key, cachedValue);
-                    }
-                    return cachedValue;
+            
+            // 从缓存获取（不重复检查是否为热Key，因为调用方已检查）
+            String cachedValue = getFromCache(key);
+            if (cachedValue != null) {
+                // 记录热Key缓存命中
+                if (hitRateStatistics != null) {
+                    hitRateStatistics.recordHotKeyHit();
+                }
+                if (log.isDebugEnabled()) {
+                    log.debug("从本地缓存获取成功, key: {}", key);
+                }
+                return cachedValue;
+            } else {
+                // 记录热Key缓存未命中
+                if (hitRateStatistics != null) {
+                    hitRateStatistics.recordHotKeyMiss();
                 }
             }
         }
 
-        if (log.isDebugEnabled()) {
-            log.debug("本地缓存未命中, key: {}, 从远程Redis获取", key);
-        }
-
-        // 3. 缓存未命中，通过回调从Redis获取值
-        long startTime = System.currentTimeMillis();
+        // 4. 缓存未命中，从Redis获取值
         String value = redisGetter != null ? redisGetter.apply(key) : null;
-        long cost = System.currentTimeMillis() - startTime;
-        if (log.isDebugEnabled()) {
-            if (value != null) {
-                log.debug("从远程Redis获取成功, key: {}, value: {}, 耗时: {}ms", key, value, cost);
-            } else {
-                log.debug("从远程Redis获取失败或值为空, key: {}, 耗时: {}ms", key, cost);
-            }
-        }
-        // 4. 如果从Redis获取到值，且是热Key，更新本地缓存
-        // 重新检查是否为热Key（避免在获取Redis数据过程中被降级）
-        if (value != null && isHotKey(key)) {
-            updateCache(key, value);
+        
+        // 5. 如果从Redis获取到值，且是热Key，更新本地缓存
+        if (value != null && isHot) {
+            // 直接更新缓存，不重复检查是否为热Key（调用方已检查）
+            hotKeyStorage.put(key, value);
             if (log.isDebugEnabled()) {
                 log.debug("更新本地缓存完成, key: {}", key);
             }
         }
+        
         return value;
     }
 
@@ -234,24 +255,28 @@ public class HotKeyClient implements IHotKeyClient {
         hotKeyManager.recordAccess(key);
     }
 
+    /**
+     * 从缓存获取值（内部方法，不检查是否为热Key）
+     * 注意：调用此方法前需要确保key是热Key
+     *
+     * @param key Redis key
+     * @return 缓存值，如果未命中返回null
+     */
     private String getFromCache(String key) {
         if (!enabled || key == null) {
             return null;
         }
-        // 只有热Key才从缓存获取
-        if (isHotKey(key)) {
-            return hotKeyStorage.get(key);
-        }
-        return null;
+        // 直接获取，不重复检查是否为热Key（调用方已检查）
+        return hotKeyStorage.get(key);
     }
 
     @Override
     public void updateCache(String key, String value) {
-        if (!enabled || key == null) {
+        if (!enabled || key == null || value == null) {
             return;
         }
-        // 如果是热Key，且值不为空，则更新缓存
-        if (isHotKey(key) && value != null) {
+        // 如果是热Key，则更新缓存（内部方法会检查是否为热Key）
+        if (isHotKey(key)) {
             hotKeyStorage.put(key, value);
         }
     }
@@ -272,5 +297,10 @@ public class HotKeyClient implements IHotKeyClient {
     @Override
     public boolean isEnabled() {
         return enabled;
+    }
+
+    @Override
+    public IHotKeyMonitor getHotKeyMonitor() {
+        return hotKeyMonitor;
     }
 }

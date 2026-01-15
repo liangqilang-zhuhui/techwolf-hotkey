@@ -72,5 +72,5 @@ public interface IComponentFactory {
      */
     IScheduler createScheduler(HotKeyConfig config,
                                IHotKeyManager hotKeyManager,
-                               IHotKeySelector hotKeySelector);
+                               IHotKeySelector hotKeySelector,IAccessRecorder accessRecorder);
 }

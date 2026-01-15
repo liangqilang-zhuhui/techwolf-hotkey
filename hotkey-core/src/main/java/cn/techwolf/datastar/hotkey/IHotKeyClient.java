@@ -1,5 +1,9 @@
 package cn.techwolf.datastar.hotkey;
 
+import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
+import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
+import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
+
 import java.util.function.Function;
 
 /**
@@ -50,4 +54,11 @@ public interface IHotKeyClient {
      * @return 是否启用
      */
     boolean isEnabled();
+
+    /**
+     * 获取热Key监控器（用于监控等场景）
+     *
+     * @return 热Key监控器，如果未启用则返回null
+     */
+    cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor getHotKeyMonitor();
 }

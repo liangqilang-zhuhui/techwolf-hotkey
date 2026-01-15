@@ -67,19 +67,7 @@ hotkey:
 
 ### 3. 使用方式
 
-#### 方式一：自动集成（推荐）
-
-如果你的项目使用了 `RedisClientManager`，starter会自动注入 `HotKeyClient`，无需任何额外代码：
-
-```java
-@Autowired
-private RedisClientManager redisClientManager;
-
-// 直接使用，自动享受热Key缓存
-String value = redisClientManager.get("user:123");
-```
-
-#### 方式二：直接使用HotKeyClient
+#### 方式一：直接使用HotKeyClient
 
 ```java
 @Autowired
@@ -101,7 +89,7 @@ public String get(String key) {
 }
 ```
 
-#### 方式三：非Spring环境使用
+#### 方式二：非Spring环境使用
 
 ```java
 // 创建配置
@@ -171,6 +159,75 @@ client.shutdown();
 |------|------|--------|------|
 | enabled | boolean | true | 是否启用监控 |
 | interval | long | 60000 | 监控输出间隔（毫秒），默认60秒输出一次 |
+
+## JMX 监控
+
+系统提供了 JMX MBean 来暴露监控数据，支持通过 JConsole、VisualVM 等工具查看实时监控信息。
+
+### MBean 信息
+
+- **MBean 名称**：`cn.techwolf.datastar.hotkey:type=HotKeyMonitor`
+- **自动注册**：当监控功能启用时，MBean 会自动注册到 MBeanServer
+
+### 可用的监控指标
+
+| 属性/方法 | 类型 | 说明 |
+|-----------|------|------|
+| `getHotKeyCount()` | int | 当前热Key数量 |
+| `getHotKeys()` | String | 热Key列表（JSON格式） |
+| `getStorageSize()` | long | 数据存储层大小 |
+| `getRecorderSize()` | int | 访问记录模块的数据量 |
+| `getRecorderMemorySize()` | long | 访问记录模块的内存大小（字节） |
+| `getUpdaterSize()` | int | 缓存数据更新器注册表的数据量 |
+| `getUpdaterMemorySize()` | long | 缓存数据更新器注册表的内存大小（字节） |
+| `getMonitorInfoJson()` | String | 完整的监控信息（JSON格式） |
+| `refresh()` | void | 手动刷新监控数据 |
+
+### 使用方式
+
+#### 1. 通过 JConsole 查看
+
+1. 启动应用后，运行 `jconsole` 命令
+2. 连接到本地进程或远程进程
+3. 在 MBeans 标签页中找到 `cn.techwolf.datastar.hotkey` -> `HotKeyMonitor`
+4. 查看 Attributes 和 Operations
+
+#### 2. 通过 VisualVM 查看
+
+1. 启动应用后，运行 `jvisualvm` 命令
+2. 连接到本地进程或远程进程
+3. 在 MBeans 标签页中找到 `cn.techwolf.datastar.hotkey` -> `HotKeyMonitor`
+4. 查看属性和操作
+
+#### 3. 通过代码访问
+
+```java
+import javax.management.MBeanServer;
+import javax.management.ObjectName;
+import java.lang.management.ManagementFactory;
+
+MBeanServer mBeanServer = ManagementFactory.getPlatformMBeanServer();
+ObjectName objectName = new ObjectName("cn.techwolf.datastar.hotkey:type=HotKeyMonitor");
+HotKeyMonitorMXBean mBean = JMX.newMBeanProxy(mBeanServer, objectName, HotKeyMonitorMXBean.class);
+
+// 获取热Key数量
+int count = mBean.getHotKeyCount();
+
+// 获取完整监控信息
+String json = mBean.getMonitorInfoJson();
+```
+
+### 监控数据结构
+
+监控数据通过 `MonitorInfo` 类进行结构化存储，包含以下字段：
+
+- `hotKeys`: 热Key列表（Set<String>）
+- `hotKeyCount`: 热Key数量
+- `storageSize`: 数据存储层大小
+- `recorderSize`: 访问记录模块的数据量
+- `recorderMemorySize`: 访问记录模块的内存大小（估算，单位：字节）
+- `updaterSize`: 缓存数据更新器注册表的数据量
+- `updaterMemorySize`: 缓存数据更新器注册表的内存大小（估算，单位：字节）
 
 ## 工作原理
 

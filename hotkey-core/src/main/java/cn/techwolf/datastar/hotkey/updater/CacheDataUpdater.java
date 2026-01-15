@@ -93,28 +93,50 @@ public class CacheDataUpdater implements ICacheDataUpdater {
     /**
      * 注册数据获取回调函数
      * 如果key或dataGetter为null，则不进行注册
+     * 
+     * 性能优化：使用 putIfAbsent 替代 containsKey + put，保证原子操作
+     * 避免并发场景下的竞态条件：
+     * 1. 防止回调函数被覆盖
+     * 2. 减少不必要的 put 操作
+     * 3. 提高并发性能
      *
      * @param key Redis key
      * @param dataGetter 数据获取回调函数（Function，接收key参数，返回value）
      */
     @Override
     public void register(String key, Function<String, String> dataGetter) {
-        if (key == null) {
-            log.debug("注册数据获取回调函数失败，key为null");
-            return;
-        }
-        if (dataGetter == null) {
-            log.debug("注册数据获取回调函数失败，dataGetter为null, key: {}", key);
+        if (!validateRegisterParams(key, dataGetter)) {
             return;
         }
         try {
-            if(!registry.containsKey(key)) {
-                registry.put(key, dataGetter);
+            // 优化：使用 putIfAbsent 实现原子操作
+            // putIfAbsent 返回 null 表示成功插入，返回已存在的值表示 key 已存在
+            Function<String, String> previous = registry.putIfAbsent(key, dataGetter);
+            if (previous == null) {
+                // 成功注册（首次注册）
                 log.debug("注册数据获取回调函数成功, key: {}", key);
+            } else {
+                // key 已存在，使用已注册的回调函数（不覆盖）
+                log.debug("数据获取回调函数已存在，跳过注册, key: {}", key);
             }
         } catch (Exception e) {
             log.debug("注册数据获取回调函数失败, key: {}", key, e);
         }
+    }
+
+    /**
+     * 验证注册参数
+     */
+    private boolean validateRegisterParams(String key, Function<String, String> dataGetter) {
+        if (key == null) {
+            log.debug("注册数据获取回调函数失败，key为null");
+            return false;
+        }
+        if (dataGetter == null) {
+            log.debug("注册数据获取回调函数失败，dataGetter为null, key: {}", key);
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -294,55 +316,122 @@ public class CacheDataUpdater implements ICacheDataUpdater {
             return;
         }
 
-        // 获取所有已注册的key
         Set<String> allKeys = getAllKeys();
         if (allKeys.isEmpty()) {
             return;
         }
 
+        // 刷新所有已注册的key
+        RefreshResult result = refreshAllKeys(allKeys);
+        
+        // 移除失败次数超过阈值的key
+        int removedCount = removeExceededFailureKeys();
+        
+        // 记录刷新结果
+        logRefreshResult(result, removedCount);
+    }
+
+    /**
+     * 刷新结果统计
+     */
+    private static class RefreshResult {
         int successCount = 0;
         int failureCount = 0;
-        int removedCount = 0;
+    }
 
-        // 遍历所有已注册的key，只刷新热Key
-        // 注意：allKeys是注册表的快照，在遍历过程中如果key被降级移除，get(key)会返回null，我们跳过即可
+    /**
+     * 刷新所有已注册的key
+     */
+    private RefreshResult refreshAllKeys(Set<String> allKeys) {
+        RefreshResult result = new RefreshResult();
+        
         for (String key : allKeys) {
             try {
-                // 获取数据获取回调函数（如果key已被降级移除，这里会返回null）
-                Function<String, String> dataGetter = get(key);
-                if (dataGetter == null) {
-                    // key已被移除（可能被降级），跳过刷新
-                    continue;
-                }
-                // 调用数据获取回调函数获取最新值
-                String newValue = dataGetter.apply(key);
-                if (newValue != null) {
-                    // 刷新成功，更新缓存
-                    if (hotKeyStorage != null) {
-                        hotKeyStorage.put(key, newValue);
-                    }
-                    // 清除失败计数
-                    refreshFailureCount.remove(key);
-                    successCount++;
-                    if (log.isDebugEnabled()) {
-                        log.debug("自动刷新热Key成功, key: {}", key);
-                    }
+                if (refreshSingleKey(key)) {
+                    result.successCount++;
                 } else {
-                    // 值为null，可能是key不存在，记录失败
-                    handleRefreshFailure(key);
-                    failureCount++;
+                    result.failureCount++;
                 }
             } catch (Exception e) {
-                // 刷新异常，记录失败
                 log.warn("自动刷新热Key异常, key: {}", key, e);
                 handleRefreshFailure(key);
-                failureCount++;
+                result.failureCount++;
             }
         }
+        
+        return result;
+    }
 
-        // 移除失败次数超过阈值的key
+    /**
+     * 刷新单个key
+     *
+     * @param key Redis key
+     * @return 是否刷新成功
+     */
+    private boolean refreshSingleKey(String key) {
+        // 获取数据获取回调函数（如果key已被降级移除，这里会返回null）
+        Function<String, String> dataGetter = get(key);
+        if (dataGetter == null) {
+            // key已被移除（可能被降级），跳过刷新
+            return false;
+        }
+        
+        // 调用数据获取回调函数获取最新值
+        String newValue = dataGetter.apply(key);
+        if (newValue != null) {
+            // 刷新成功，更新缓存
+            updateCacheAfterRefresh(key, newValue);
+            return true;
+        } else {
+            // 值为null，可能是key不存在，记录失败
+            handleRefreshFailure(key);
+            return false;
+        }
+    }
+
+    /**
+     * 刷新成功后更新缓存
+     */
+    private void updateCacheAfterRefresh(String key, String newValue) {
+        if (hotKeyStorage != null) {
+            hotKeyStorage.put(key, newValue);
+        }
+        // 清除失败计数
+        refreshFailureCount.remove(key);
+        if (log.isDebugEnabled()) {
+            log.debug("自动刷新热Key成功, key: {}", key);
+        }
+    }
+
+    /**
+     * 移除失败次数超过阈值的key
+     *
+     * @return 移除的key数量
+     */
+    private int removeExceededFailureKeys() {
         int maxFailureCount = config.getRefresh().getMaxFailureCount();
-        // 先收集需要移除的key，避免在遍历时修改Map
+        Set<String> keysToRemove = collectKeysToRemove(maxFailureCount);
+        return removeKeysWithFailureCount(keysToRemove);
+    }
+
+    /**
+     * 移除失败次数超过阈值的key
+     */
+    private int removeKeysWithFailureCount(Set<String> keysToRemove) {
+        int removedCount = 0;
+        for (String key : keysToRemove) {
+            removeHotKey(key);
+            Integer count = refreshFailureCount.remove(key);
+            log.warn("热Key刷新失败次数超过阈值，已移除, key: {}, 失败次数: {}", key, count);
+            removedCount++;
+        }
+        return removedCount;
+    }
+
+    /**
+     * 收集需要移除的key（失败次数超过阈值）
+     */
+    private Set<String> collectKeysToRemove(int maxFailureCount) {
         Set<String> keysToRemove = new HashSet<>();
         for (Map.Entry<String, Integer> entry : refreshFailureCount.entrySet()) {
             String key = entry.getKey();
@@ -351,16 +440,16 @@ public class CacheDataUpdater implements ICacheDataUpdater {
                 keysToRemove.add(key);
             }
         }
-        // 统一移除
-        for (String key : keysToRemove) {
-            removeHotKey(key);
-            removedCount++;
-            Integer count = refreshFailureCount.remove(key);
-            log.warn("热Key刷新失败次数超过阈值，已移除, key: {}, 失败次数: {}", key, count);
-        }
+        return keysToRemove;
+    }
 
-        if (log.isDebugEnabled() && (successCount > 0 || failureCount > 0 || removedCount > 0)) {
-            log.debug("缓存数据自动刷新完成, 成功: {}, 失败: {}, 移除: {}", successCount, failureCount, removedCount);
+    /**
+     * 记录刷新结果日志
+     */
+    private void logRefreshResult(RefreshResult result, int removedCount) {
+        if (log.isDebugEnabled() && (result.successCount > 0 || result.failureCount > 0 || removedCount > 0)) {
+            log.debug("缓存数据自动刷新完成, 成功: {}, 失败: {}, 移除: {}", 
+                    result.successCount, result.failureCount, removedCount);
         }
     }
 
@@ -411,6 +500,10 @@ public class CacheDataUpdater implements ICacheDataUpdater {
         }
         for (String key : demotedKeys) {
             try {
+                // 从存储层中移除（如果存在）
+                if (hotKeyStorage != null) {
+                    hotKeyStorage.remove(key);
+                }
                 // 从注册表中移除（不再需要自动刷新）
                 remove(key);
                 // 从失败计数中移除

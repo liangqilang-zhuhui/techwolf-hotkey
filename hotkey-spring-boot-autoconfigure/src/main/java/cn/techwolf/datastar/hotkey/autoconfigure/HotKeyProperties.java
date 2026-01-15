@@ -1,5 +1,6 @@
 package cn.techwolf.datastar.hotkey.autoconfigure;
 
+import cn.techwolf.datastar.hotkey.config.HotKeyConfigDefaults;
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
@@ -16,7 +17,7 @@ public class HotKeyProperties {
     /**
      * 是否启用热Key检测
      */
-    private boolean enabled = true;
+    private boolean enabled = HotKeyConfigDefaults.ENABLED;
 
     /**
      * 检测配置
@@ -39,23 +40,28 @@ public class HotKeyProperties {
     private Monitor monitor = new Monitor();
 
     /**
+     * 刷新配置（模块六：Getter自动刷新）
+     */
+    private Refresh refresh = new Refresh();
+
+    /**
      * 检测配置
      */
     @Data
     public static class Detection {
-        private int windowSize = 10;
-        private int topN = 10;
-        private double hotKeyQpsThreshold = 3000.0;
-        private double warmKeyQpsThreshold = 500.0;
-        private long promotionInterval = 5000;
-        private long demotionInterval = 60000;
-        private int maxStatsCapacity = 5000;
-        private double admissionMinFrequency = 10.0;
-        private double samplingRate = 0.1;
-        private double fastAdmissionThreshold = 50.0;
-        private int rejectedAccessThreshold = 10000;
-        private boolean enableConsistentSampling = true;
-        private double capacityUsageThreshold = 0.5;
+        private int windowSize = HotKeyConfigDefaults.Detection.WINDOW_SIZE;
+        private int topN = HotKeyConfigDefaults.Detection.TOP_N;
+        private double hotKeyQpsThreshold = HotKeyConfigDefaults.Detection.HOT_KEY_QPS_THRESHOLD;
+        private double warmKeyQpsThreshold = HotKeyConfigDefaults.Detection.WARM_KEY_QPS_THRESHOLD;
+        private long promotionInterval = HotKeyConfigDefaults.Detection.PROMOTION_INTERVAL;
+        private long demotionInterval = HotKeyConfigDefaults.Detection.DEMOTION_INTERVAL;
+        private int maxStatsCapacity = HotKeyConfigDefaults.Detection.MAX_STATS_CAPACITY;
+        private double admissionMinFrequency = HotKeyConfigDefaults.Detection.ADMISSION_MIN_FREQUENCY;
+        private double samplingRate = HotKeyConfigDefaults.Detection.SAMPLING_RATE;
+        private double fastAdmissionThreshold = HotKeyConfigDefaults.Detection.FAST_ADMISSION_THRESHOLD;
+        private int rejectedAccessThreshold = HotKeyConfigDefaults.Detection.REJECTED_ACCESS_THRESHOLD;
+        private boolean enableConsistentSampling = HotKeyConfigDefaults.Detection.ENABLE_CONSISTENT_SAMPLING;
+        private double capacityUsageThreshold = HotKeyConfigDefaults.Detection.CAPACITY_USAGE_THRESHOLD;
     }
 
     /**
@@ -63,10 +69,10 @@ public class HotKeyProperties {
      */
     @Data
     public static class Storage {
-        private boolean enabled = true;
-        private long maximumSize = 100;
-        private int expireAfterWrite = 60;
-        private boolean recordStats = true;
+        private boolean enabled = HotKeyConfigDefaults.Storage.ENABLED;
+        private long maximumSize = HotKeyConfigDefaults.Storage.MAXIMUM_SIZE;
+        private int expireAfterWrite = HotKeyConfigDefaults.Storage.EXPIRE_AFTER_WRITE;
+        private boolean recordStats = HotKeyConfigDefaults.Storage.RECORD_STATS;
     }
 
     /**
@@ -74,8 +80,9 @@ public class HotKeyProperties {
      */
     @Data
     public static class Recorder {
-        private int maxCapacity = 10000;
-        private int windowSize = 60;
+        private int maxCapacity = HotKeyConfigDefaults.Recorder.MAX_CAPACITY;
+        private int windowSize = HotKeyConfigDefaults.Recorder.WINDOW_SIZE;
+        private int inactiveExpireTime = HotKeyConfigDefaults.Recorder.INACTIVE_EXPIRE_TIME;
     }
 
     /**
@@ -83,7 +90,17 @@ public class HotKeyProperties {
      */
     @Data
     public static class Monitor {
-        private long interval = 60000;
-        private boolean enabled = true;
+        private long interval = HotKeyConfigDefaults.Monitor.INTERVAL;
+        private boolean enabled = HotKeyConfigDefaults.Monitor.ENABLED;
+    }
+
+    /**
+     * 刷新配置（模块六：Getter自动刷新）
+     */
+    @Data
+    public static class Refresh {
+        private boolean enabled = HotKeyConfigDefaults.Refresh.ENABLED;
+        private long interval = HotKeyConfigDefaults.Refresh.INTERVAL;
+        private int maxFailureCount = HotKeyConfigDefaults.Refresh.MAX_FAILURE_COUNT;
     }
 }

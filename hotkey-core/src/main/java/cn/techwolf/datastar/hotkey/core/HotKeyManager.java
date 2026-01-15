@@ -52,6 +52,7 @@ public class HotKeyManager implements IHotKeyManager {
     /**
      * 异步执行线程池（用于记录访问日志，避免阻塞主流程）
      * 使用有界队列和拒绝策略，防止OOM
+     * 注意：使用静态线程池，所有实例共享，避免创建过多线程池
      */
     private static final ExecutorService asyncExecutor = new ThreadPoolExecutor(
             100, 1000, 60L, TimeUnit.SECONDS,
@@ -139,12 +140,38 @@ public class HotKeyManager implements IHotKeyManager {
             Set<String> updated = new HashSet<>(hotKeys);
             updated.removeAll(removedKeys);
             this.hotKeys = Collections.unmodifiableSet(updated);
-            // 自动清理被降级key的相关资源（从注册表和失败计数中移除）
-            cacheDataUpdater.cleanupDemotedKeys(removedKeys);
+            
+            // 清理被降级key的相关资源
+            cleanupDemotedKeys(removedKeys);
+            
             if (log.isDebugEnabled()) {
                 log.debug("降级热Key完成, 移除: {}, 移除key列表: {}, 剩余热Key数: {}",
                         removedKeys.size(), removedKeys, hotKeys.size());
             }
+        }
+    }
+
+    /**
+     * 清理被降级key的相关资源
+     * 包括：存储层数据、缓存数据更新器中的注册信息
+     *
+     * @param removedKeys 被降级的key集合
+     */
+    private void cleanupDemotedKeys(Set<String> removedKeys) {
+        // 清理被降级key的存储层数据
+        if (hotKeyStorage != null) {
+            for (String key : removedKeys) {
+                try {
+                    hotKeyStorage.remove(key);
+                } catch (Exception e) {
+                    log.debug("清理被降级key的存储层数据失败, key: {}", key, e);
+                }
+            }
+        }
+        
+        // 自动清理被降级key的相关资源（从注册表和失败计数中移除）
+        if (cacheDataUpdater != null) {
+            cacheDataUpdater.cleanupDemotedKeys(removedKeys);
         }
     }
 }

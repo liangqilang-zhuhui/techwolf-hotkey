@@ -3,17 +3,9 @@ package cn.techwolf.datastar.hotkey.autoconfigure;
 import cn.techwolf.datastar.hotkey.HotKeyClient;
 import cn.techwolf.datastar.hotkey.IHotKeyClient;
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
-import cn.techwolf.datastar.hotkey.core.HotKeyManager;
-import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
-import cn.techwolf.datastar.hotkey.selector.HotKeySelector;
-import cn.techwolf.datastar.hotkey.selector.IHotKeySelector;
 import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitor;
+import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitorMBean;
 import cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor;
-import cn.techwolf.datastar.hotkey.recorder.AccessRecorder;
-import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
-import cn.techwolf.datastar.hotkey.storage.HotKeyStorage;
-import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
-import cn.techwolf.datastar.hotkey.updater.ICacheDataUpdater;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -86,6 +78,7 @@ public class HotKeyAutoConfiguration {
         HotKeyConfig.Recorder recorder = new HotKeyConfig.Recorder();
         recorder.setMaxCapacity(recorderProps.getMaxCapacity());
         recorder.setWindowSize(recorderProps.getWindowSize());
+        recorder.setInactiveExpireTime(recorderProps.getInactiveExpireTime());
         config.setRecorder(recorder);
 
         // 转换Monitor配置
@@ -93,6 +86,14 @@ public class HotKeyAutoConfiguration {
         HotKeyConfig.Monitor monitor = new HotKeyConfig.Monitor();
         monitor.setInterval(monitorProps.getInterval());
         config.setMonitor(monitor);
+
+        // 转换Refresh配置
+        HotKeyProperties.Refresh refreshProps = properties.getRefresh();
+        HotKeyConfig.Refresh refresh = new HotKeyConfig.Refresh();
+        refresh.setEnabled(refreshProps.isEnabled());
+        refresh.setInterval(refreshProps.getInterval());
+        refresh.setMaxFailureCount(refreshProps.getMaxFailureCount());
+        config.setRefresh(refresh);
 
         log.info("热Key检测配置初始化完成: enabled={}", config.isEnabled());
         return config;
@@ -111,22 +112,32 @@ public class HotKeyAutoConfiguration {
 
     /**
      * 热Key监控器
-     * 注意：为了监控功能，我们需要从HotKeyClient中获取内部组件
-     * 但由于HotKeyClient没有提供getter方法，我们直接创建监控器需要的组件
-     * 这些组件会与HotKeyClient内部的组件重复，但只用于监控，不影响功能
+     * 注意：监控器作为HotKeyClient的内部属性，直接从HotKeyClient获取
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "hotkey.monitor", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public IHotKeyMonitor hotKeyMonitor(HotKeyConfig config) {
-        // 创建监控所需的组件（这些组件与HotKeyClient内部的组件是独立的，仅用于监控）
-        IAccessRecorder accessRecorder = new AccessRecorder(config);
-        IHotKeyStorage hotKeyStorage = new HotKeyStorage(config);
-        IHotKeySelector hotKeySelector = new HotKeySelector(accessRecorder, config);
-        // 监控器不需要清理功能，传入null即可
-        ICacheDataUpdater cacheDataUpdater = null;
-        IHotKeyManager hotKeyManager = new HotKeyManager(accessRecorder, hotKeyStorage, cacheDataUpdater);
-        return new HotKeyMonitor(hotKeyManager, hotKeyStorage, accessRecorder, config);
+    public IHotKeyMonitor hotKeyMonitor(IHotKeyClient hotKeyClient) {
+        IHotKeyMonitor monitor = hotKeyClient.getHotKeyMonitor();
+        if (monitor == null) {
+            log.warn("HotKeyClient未启用或监控器未初始化");
+        }
+        return monitor;
+    }
+
+    /**
+     * 热Key监控JMX MBean
+     * 通过JMX暴露监控数据，支持JConsole、VisualVM等工具查看
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(prefix = "hotkey.monitor", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public HotKeyMonitorMBean hotKeyMonitorMBean(IHotKeyMonitor hotKeyMonitor) {
+        if (hotKeyMonitor == null) {
+            log.warn("热Key监控器未初始化，跳过JMX MBean注册");
+            return null;
+        }
+        return new HotKeyMonitorMBean(hotKeyMonitor);
     }
 
     /**

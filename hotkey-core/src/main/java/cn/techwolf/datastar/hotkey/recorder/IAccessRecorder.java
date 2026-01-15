@@ -49,10 +49,14 @@ public interface IAccessRecorder {
     int size();
 
     /**
-     * 清理低QPS的key
-     * 当容量超限时，按QPS排序，移除QPS最低的key
+     * 清理过期和低QPS的key
+     * 包含两种触发机制：
+     * 1. 时间触发：清理超过指定时间未访问的非活跃key
+     * 2. 容量触发：当容量超限时，按QPS排序，移除QPS最低的key
      * 保留热Key和温Key，优先清理冷Key
      * 清理策略：保留80%的容量，清理20%
+     * 
+     * 注意：此方法默认异步执行，不阻塞调用线程
      */
-    void cleanupLowQpsKeys();
+    void cleanupKeys();
 }

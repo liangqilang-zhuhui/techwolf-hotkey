@@ -52,7 +52,7 @@ public class DefaultComponentFactory implements IComponentFactory {
     @Override
     public IScheduler createScheduler(HotKeyConfig config,
                                       IHotKeyManager hotKeyManager,
-                                      IHotKeySelector hotKeySelector) {
-        return new SchedulerManager(config, hotKeyManager, hotKeySelector);
+                                      IHotKeySelector hotKeySelector,IAccessRecorder accessRecorder) {
+        return new SchedulerManager(config, hotKeyManager, hotKeySelector,accessRecorder);
     }
 }

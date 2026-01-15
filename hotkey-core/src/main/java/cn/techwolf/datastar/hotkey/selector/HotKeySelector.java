@@ -44,80 +44,127 @@ public class HotKeySelector implements IHotKeySelector {
         try {
             long startTime = System.currentTimeMillis();
 
-            // 复用AccessRecorder的逻辑，获取所有满足QPS阈值的key
+            // 获取访问统计信息
+            Map<String, Double> accessStats = accessRecorder.getAccessStatistics();
             Set<String> allHotKeysByQps = accessRecorder.getHotKeys();
             
-            // 获取访问统计信息（用于排序）
-            Map<String, Double> accessStats = accessRecorder.getAccessStatistics();
-
             double hotKeyQpsThreshold = config.getDetection().getHotKeyQpsThreshold();
             int topN = config.getDetection().getTopN();
 
-            if (log.isDebugEnabled()) {
-                log.debug("开始晋升热Key检查, 阈值: {}, TopN: {}, 满足阈值key数: {}, 当前管理热Key数: {}", 
-                        hotKeyQpsThreshold, topN, allHotKeysByQps.size(), 
-                        currentHotKeys != null ? currentHotKeys.size() : 0);
-                // 输出前10个满足阈值的key的QPS信息
-                allHotKeysByQps.stream()
-                        .filter(key -> accessStats.containsKey(key))
-                        .sorted((a, b) -> Double.compare(
-                                accessStats.getOrDefault(b, 0.0), 
-                                accessStats.getOrDefault(a, 0.0)
-                        ))
-                        .limit(10)
-                        .forEach(key -> log.debug("访问统计: key={}, QPS={}", 
-                                key, accessStats.get(key)));
-            }
+            // 记录开始日志
+            logPromotionStart(allHotKeysByQps, accessStats, hotKeyQpsThreshold, topN, currentHotKeys);
 
             // 从满足阈值的key中，按QPS降序排序，取TopN
-            List<String> candidates = allHotKeysByQps.stream()
-                    .filter(key -> {
-                        Double qps = accessStats.get(key);
-                        return qps != null && qps >= hotKeyQpsThreshold;
-                    })
-                    .sorted((a, b) -> Double.compare(
-                            accessStats.getOrDefault(b, 0.0), 
-                            accessStats.getOrDefault(a, 0.0)
-                    ))
-                    .limit(topN)
-                    .collect(Collectors.toList());
-
-            if (log.isDebugEnabled()) {
-                log.debug("满足条件的候选key数: {}, 候选key列表: {}", 
-                        candidates.size(), candidates);
-                // 输出候选key的详细信息
-                candidates.forEach(key -> {
-                    Double qps = accessStats.get(key);
-                    boolean isCurrentHotKey = currentHotKeys != null && currentHotKeys.contains(key);
-                    log.debug("候选key: key={}, QPS={}, 是否已是热Key: {}", 
-                            key, qps, isCurrentHotKey);
-                });
-            }
+            List<String> candidates = selectTopNCandidates(allHotKeysByQps, accessStats, hotKeyQpsThreshold, topN);
+            
+            // 记录候选key信息
+            logCandidates(candidates, accessStats, currentHotKeys);
 
             // 获取新晋升的热key（排除已经在HotKeyManager中管理的key）
-            Set<String> newHotKeys = candidates.stream()
-                    .filter(key -> currentHotKeys == null || !currentHotKeys.contains(key))
-                    .collect(Collectors.toSet());
+            Set<String> newHotKeys = filterNewHotKeys(candidates, currentHotKeys);
 
-            long cost = System.currentTimeMillis() - startTime;
-            if (newHotKeys.size() > 0) {
-                if (log.isDebugEnabled()) {
-                    log.debug("晋升热Key计算完成, 新晋升: {}, 新晋升key列表: {}, 耗时: {}ms",
-                            newHotKeys.size(), newHotKeys, cost);
-                }
-            } else if (log.isDebugEnabled()) {
-                if (candidates.size() > 0) {
-                    log.debug("所有候选key都已经是热Key，无需晋升, 候选key数: {}, 耗时: {}ms", 
-                            candidates.size(), cost);
-                } else {
-                    log.debug("没有满足条件的候选key, 满足阈值key数: {}, 耗时: {}ms", 
-                            allHotKeysByQps.size(), cost);
-                }
-            }
+            // 记录完成日志
+            logPromotionResult(newHotKeys, candidates, allHotKeysByQps, startTime);
+            
             return newHotKeys;
         } catch (Exception e) {
             log.error("晋升热Key计算失败", e);
             return Collections.emptySet();
+        }
+    }
+
+    /**
+     * 选择TopN候选key
+     */
+    private List<String> selectTopNCandidates(Set<String> allHotKeysByQps, 
+                                             Map<String, Double> accessStats,
+                                             double threshold, 
+                                             int topN) {
+        return allHotKeysByQps.stream()
+                .filter(key -> {
+                    Double qps = accessStats.get(key);
+                    return qps != null && qps >= threshold;
+                })
+                .sorted((a, b) -> Double.compare(
+                        accessStats.getOrDefault(b, 0.0), 
+                        accessStats.getOrDefault(a, 0.0)
+                ))
+                .limit(topN)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 过滤出新晋升的热key
+     */
+    private Set<String> filterNewHotKeys(List<String> candidates, Set<String> currentHotKeys) {
+        return candidates.stream()
+                .filter(key -> currentHotKeys == null || !currentHotKeys.contains(key))
+                .collect(Collectors.toSet());
+    }
+
+    /**
+     * 记录晋升开始日志
+     */
+    private void logPromotionStart(Set<String> allHotKeysByQps,
+                                   Map<String, Double> accessStats,
+                                   double threshold,
+                                   int topN,
+                                   Set<String> currentHotKeys) {
+        if (log.isDebugEnabled()) {
+            log.debug("开始晋升热Key检查, 阈值: {}, TopN: {}, 满足阈值key数: {}, 当前管理热Key数: {}", 
+                    threshold, topN, allHotKeysByQps.size(), 
+                    currentHotKeys != null ? currentHotKeys.size() : 0);
+            // 输出前10个满足阈值的key的QPS信息
+            allHotKeysByQps.stream()
+                    .filter(key -> accessStats.containsKey(key))
+                    .sorted((a, b) -> Double.compare(
+                            accessStats.getOrDefault(b, 0.0), 
+                            accessStats.getOrDefault(a, 0.0)
+                    ))
+                    .limit(10)
+                    .forEach(key -> log.debug("访问统计: key={}, QPS={}", 
+                            key, accessStats.get(key)));
+        }
+    }
+
+    /**
+     * 记录候选key信息
+     */
+    private void logCandidates(List<String> candidates, 
+                              Map<String, Double> accessStats,
+                              Set<String> currentHotKeys) {
+        if (log.isDebugEnabled()) {
+            log.debug("满足条件的候选key数: {}, 候选key列表: {}", 
+                    candidates.size(), candidates);
+            candidates.forEach(key -> {
+                Double qps = accessStats.get(key);
+                boolean isCurrentHotKey = currentHotKeys != null && currentHotKeys.contains(key);
+                log.debug("候选key: key={}, QPS={}, 是否已是热Key: {}", 
+                        key, qps, isCurrentHotKey);
+            });
+        }
+    }
+
+    /**
+     * 记录晋升结果日志
+     */
+    private void logPromotionResult(Set<String> newHotKeys,
+                                   List<String> candidates,
+                                   Set<String> allHotKeysByQps,
+                                   long startTime) {
+        if (!log.isDebugEnabled()) {
+            return;
+        }
+        long cost = System.currentTimeMillis() - startTime;
+        if (newHotKeys.size() > 0) {
+            log.debug("晋升热Key计算完成, 新晋升: {}, 新晋升key列表: {}, 耗时: {}ms",
+                    newHotKeys.size(), newHotKeys, cost);
+        } else if (candidates.size() > 0) {
+            log.debug("所有候选key都已经是热Key，无需晋升, 候选key数: {}, 耗时: {}ms", 
+                    candidates.size(), cost);
+        } else {
+            log.debug("没有满足条件的候选key, 满足阈值key数: {}, 耗时: {}ms", 
+                    allHotKeysByQps.size(), cost);
         }
     }
 
@@ -140,45 +187,44 @@ public class HotKeySelector implements IHotKeySelector {
                 return Collections.emptySet();
             }
 
-            Set<String> removedKeys = new HashSet<>();
+            // 筛选出需要降级的key（QPS低于阈值）
+            Set<String> removedKeys = selectKeysToDemote(currentHotKeys);
 
-            // 1. 热key中访问小于3000的，从热key移除
-            double hotKeyQpsThreshold = config.getDetection().getHotKeyQpsThreshold();
-            Map<String, Double> accessStats = accessRecorder.getAccessStatistics();
-
-            Set<String> keysToRemove = new HashSet<>();
-            for (String hotKey : currentHotKeys) {
-                Double qps = accessStats.get(hotKey);
-                if (qps == null || qps < hotKeyQpsThreshold) {
-                    keysToRemove.add(hotKey);
-                }
-            }
-
-            // 2. 如果容量超限，则清理低QPS的key（复用AccessRecorder的清理逻辑）
-            int maxCapacity = config.getRecorder().getMaxCapacity();
-            int currentSize = accessRecorder.size();
-
-            if (currentSize > maxCapacity) {
-                // 复用AccessRecorder的清理逻辑，自动保留热Key和温Key
-                accessRecorder.cleanupLowQpsKeys();
-                if (log.isDebugEnabled()) {
-                    log.debug("容量超限清理完成, 清理前容量: {}, 清理后容量: {}", 
-                            currentSize, accessRecorder.size());
-                }
-            }
-
-            removedKeys.addAll(keysToRemove);
-
-            long cost = System.currentTimeMillis() - startTime;
-            if (log.isDebugEnabled()) {
-                log.debug("降级和淘汰计算完成, 移除热Key: {}, 当前热Key数: {}, 耗时: {}ms",
-                        removedKeys.size(), currentHotKeys.size(), cost);
-            }
+            // 记录结果日志
+            logDemotionResult(removedKeys, currentHotKeys, startTime);
 
             return removedKeys;
         } catch (Exception e) {
             log.error("降级和淘汰计算失败", e);
             return Collections.emptySet();
+        }
+    }
+
+    /**
+     * 筛选出需要降级的key（QPS低于阈值）
+     */
+    private Set<String> selectKeysToDemote(Set<String> currentHotKeys) {
+        double hotKeyQpsThreshold = config.getDetection().getHotKeyQpsThreshold();
+        Map<String, Double> accessStats = accessRecorder.getAccessStatistics();
+
+        Set<String> keysToRemove = new HashSet<>();
+        for (String hotKey : currentHotKeys) {
+            Double qps = accessStats.get(hotKey);
+            if (qps == null || qps < hotKeyQpsThreshold) {
+                keysToRemove.add(hotKey);
+            }
+        }
+        return keysToRemove;
+    }
+
+    /**
+     * 记录降级结果日志
+     */
+    private void logDemotionResult(Set<String> removedKeys, Set<String> currentHotKeys, long startTime) {
+        if (log.isDebugEnabled()) {
+            long cost = System.currentTimeMillis() - startTime;
+            log.debug("降级和淘汰计算完成, 移除热Key: {}, 当前热Key数: {}, 耗时: {}ms",
+                    removedKeys.size(), currentHotKeys.size(), cost);
         }
     }
 }
