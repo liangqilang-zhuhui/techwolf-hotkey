@@ -1,12 +1,13 @@
 package cn.techwolf.datastar.hotkey.monitor;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 import java.lang.management.ManagementFactory;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * 热Key监控JMX MBean实现类
@@ -21,6 +22,12 @@ public class HotKeyMonitorMBean implements HotKeyMonitorMXBean {
      * MBean对象名称
      */
     private static final String MBEAN_NAME = "cn.techwolf.datastar.hotkey:type=HotKeyMonitor";
+
+    /**
+     * Jackson ObjectMapper实例（线程安全，可复用）
+     * 使用与Spring Boot相同的JSON库
+     */
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     /**
      * 监控器实例
@@ -103,11 +110,11 @@ public class HotKeyMonitorMBean implements HotKeyMonitorMXBean {
             if (hotKeys.isEmpty()) {
                 return "[]";
             }
-            // 手动构建JSON数组格式
-            String json = hotKeys.stream()
-                    .map(key -> "\"" + escapeJson(key) + "\"")
-                    .collect(Collectors.joining(",", "[", "]"));
-            return json;
+            // 使用Jackson序列化，自动处理转义
+            return OBJECT_MAPPER.writeValueAsString(hotKeys);
+        } catch (JsonProcessingException e) {
+            log.error("获取热Key列表失败", e);
+            return "[]";
         } catch (Exception e) {
             log.error("获取热Key列表失败", e);
             return "[]";
@@ -274,26 +281,11 @@ public class HotKeyMonitorMBean implements HotKeyMonitorMXBean {
             if (info == null) {
                 return "{}";
             }
-            // 手动构建JSON对象
-            StringBuilder json = new StringBuilder();
-            json.append("{");
-            json.append("\"hotKeyCount\":").append(info.getHotKeyCount()).append(",");
-            json.append("\"hotKeys\":").append(getHotKeys()).append(",");
-            json.append("\"storageSize\":").append(info.getStorageSize()).append(",");
-            json.append("\"recorderSize\":").append(info.getRecorderSize()).append(",");
-            json.append("\"recorderMemorySize\":").append(info.getRecorderMemorySize()).append(",");
-            json.append("\"updaterSize\":").append(info.getUpdaterSize()).append(",");
-            json.append("\"updaterMemorySize\":").append(info.getUpdaterMemorySize()).append(",");
-            json.append("\"totalWrapGetCount\":").append(info.getTotalWrapGetCount()).append(",");
-            json.append("\"wrapGetQps\":").append(info.getWrapGetQps()).append(",");
-            json.append("\"keysPerSecond\":").append(info.getKeysPerSecond()).append(",");
-            json.append("\"hotKeyAccessCount\":").append(info.getHotKeyAccessCount()).append(",");
-            json.append("\"hotKeyHitCount\":").append(info.getHotKeyHitCount()).append(",");
-            json.append("\"hotKeyMissCount\":").append(info.getHotKeyMissCount()).append(",");
-            json.append("\"hotKeyHitRate\":").append(info.getHotKeyHitRate()).append(",");
-            json.append("\"hotKeyTrafficRatio\":").append(info.getHotKeyTrafficRatio());
-            json.append("}");
-            return json.toString();
+            // 使用Jackson序列化，自动处理所有字段和转义
+            return OBJECT_MAPPER.writeValueAsString(info);
+        } catch (JsonProcessingException e) {
+            log.error("获取监控信息失败", e);
+            return "{}";
         } catch (Exception e) {
             log.error("获取监控信息失败", e);
             return "{}";
@@ -311,20 +303,4 @@ public class HotKeyMonitorMBean implements HotKeyMonitorMXBean {
         }
     }
 
-    /**
-     * 转义JSON字符串中的特殊字符
-     *
-     * @param str 原始字符串
-     * @return 转义后的字符串
-     */
-    private String escapeJson(String str) {
-        if (str == null) {
-            return "";
-        }
-        return str.replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r")
-                .replace("\t", "\\t");
-    }
 }

@@ -45,5 +45,12 @@
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
+        
+        <!-- Micrometer Core (可选依赖，如果项目已有则不需要) -->
+        <dependency>
+            <groupId>io.micrometer</groupId>
+            <artifactId>micrometer-core</artifactId>
+            <optional>true</optional>
+        </dependency>
     </dependencies>
 </project>

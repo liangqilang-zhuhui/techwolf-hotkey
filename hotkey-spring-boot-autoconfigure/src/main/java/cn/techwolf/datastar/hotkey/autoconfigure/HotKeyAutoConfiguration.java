@@ -5,8 +5,12 @@ import cn.techwolf.datastar.hotkey.IHotKeyClient;
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitor;
 import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitorMBean;
+import cn.techwolf.datastar.hotkey.monitor.HotKeyMetrics;
 import cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor;
+import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -141,6 +145,27 @@ public class HotKeyAutoConfiguration {
     }
 
     /**
+     * 热Key监控Prometheus指标绑定器
+     * 条件：只有当MeterRegistry存在时才注册（即项目已集成Micrometer）
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnClass(MeterRegistry.class)
+    @ConditionalOnBean({IHotKeyMonitor.class, MeterRegistry.class})
+    @ConditionalOnProperty(prefix = "hotkey.monitor.prometheus", name = "enabled", havingValue = "true", matchIfMissing = true)
+    public HotKeyMetrics hotKeyMetrics(IHotKeyMonitor hotKeyMonitor, 
+                                       MeterRegistry meterRegistry,
+                                       @Value("${spring.application.name:hotkey}") String applicationName) {
+        if (hotKeyMonitor == null) {
+            log.warn("热Key监控器未初始化，跳过Prometheus指标注册");
+            return null;
+        }
+        HotKeyMetrics metrics = new HotKeyMetrics(meterRegistry, hotKeyMonitor, applicationName);
+        metrics.bindTo();
+        return metrics;
+    }
+
+    /**
      * 监控任务调度器（使用Spring的@Scheduled）
      */
     @Configuration
@@ -156,6 +181,33 @@ public class HotKeyAutoConfiguration {
         public void scheduleMonitor() {
             if (monitor instanceof HotKeyMonitor) {
                 ((HotKeyMonitor) monitor).monitor();
+            }
+        }
+    }
+
+    /**
+     * Prometheus指标更新调度器
+     * 定期更新Counter指标（Gauge指标会自动更新）
+     */
+    @Configuration
+    @ConditionalOnClass(MeterRegistry.class)
+    @ConditionalOnBean({IHotKeyMonitor.class, HotKeyMetrics.class})
+    @ConditionalOnProperty(prefix = "hotkey.monitor.prometheus", name = "enabled", havingValue = "true", matchIfMissing = true)
+    static class PrometheusMetricsScheduler {
+        private final HotKeyMetrics hotKeyMetrics;
+        
+        public PrometheusMetricsScheduler(HotKeyMetrics hotKeyMetrics) {
+            this.hotKeyMetrics = hotKeyMetrics;
+        }
+        
+        /**
+         * 定期更新Counter指标
+         * 频率：每分钟更新一次（与监控任务同步）
+         */
+        @Scheduled(fixedDelayString = "${hotkey.monitor.interval:60000}")
+        public void updateMetrics() {
+            if (hotKeyMetrics != null) {
+                hotKeyMetrics.updateCounters();
             }
         }
     }

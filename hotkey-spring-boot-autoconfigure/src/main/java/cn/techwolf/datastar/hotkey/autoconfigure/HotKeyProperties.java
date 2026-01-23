@@ -45,6 +45,11 @@ public class HotKeyProperties {
     private Refresh refresh = new Refresh();
 
     /**
+     * Prometheus监控配置
+     */
+    private Prometheus prometheus = new Prometheus();
+
+    /**
      * 检测配置
      */
     @Data
@@ -102,5 +107,16 @@ public class HotKeyProperties {
         private boolean enabled = HotKeyConfigDefaults.Refresh.ENABLED;
         private long interval = HotKeyConfigDefaults.Refresh.INTERVAL;
         private int maxFailureCount = HotKeyConfigDefaults.Refresh.MAX_FAILURE_COUNT;
+    }
+
+    /**
+     * Prometheus监控配置
+     */
+    @Data
+    public static class Prometheus {
+        /**
+         * 是否启用Prometheus指标
+         */
+        private boolean enabled = true;
     }
 }
