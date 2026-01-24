@@ -99,7 +99,11 @@ public class HotKeyAutoConfiguration {
         refresh.setMaxFailureCount(refreshProps.getMaxFailureCount());
         config.setRefresh(refresh);
 
-        log.info("热Key检测配置初始化完成: enabled={}", config.isEnabled());
+        log.info("热Key检测配置初始化完成: enabled={}, hotKeyQpsThreshold={}, warmKeyQpsThreshold={}, recorderMaxCapacity={}", 
+            config.isEnabled(), 
+            config.getDetection().getHotKeyQpsThreshold(), 
+            config.getDetection().getWarmKeyQpsThreshold(),
+            config.getRecorder().getMaxCapacity());
         return config;
     }
 
