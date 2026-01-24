@@ -5,12 +5,8 @@ import cn.techwolf.datastar.hotkey.IHotKeyClient;
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitor;
 import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitorMBean;
-import cn.techwolf.datastar.hotkey.monitor.HotKeyMetrics;
 import cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor;
-import io.micrometer.core.instrument.MeterRegistry;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -43,61 +39,19 @@ public class HotKeyAutoConfiguration {
 
     /**
      * 将HotKeyProperties转换为HotKeyConfig
+     *
+     * @return HotKeyConfig配置对象
      */
     @Bean
     @ConditionalOnMissingBean
     public HotKeyConfig hotKeyConfig() {
         HotKeyConfig config = new HotKeyConfig();
         config.setEnabled(properties.isEnabled());
-
-        // 转换Detection配置
-        HotKeyProperties.Detection detectionProps = properties.getDetection();
-        HotKeyConfig.Detection detection = new HotKeyConfig.Detection();
-        detection.setWindowSize(detectionProps.getWindowSize());
-        detection.setTopN(detectionProps.getTopN());
-        detection.setHotKeyQpsThreshold(detectionProps.getHotKeyQpsThreshold());
-        detection.setWarmKeyQpsThreshold(detectionProps.getWarmKeyQpsThreshold());
-        detection.setPromotionInterval(detectionProps.getPromotionInterval());
-        detection.setDemotionInterval(detectionProps.getDemotionInterval());
-        detection.setMaxStatsCapacity(detectionProps.getMaxStatsCapacity());
-        detection.setAdmissionMinFrequency(detectionProps.getAdmissionMinFrequency());
-        detection.setSamplingRate(detectionProps.getSamplingRate());
-        detection.setFastAdmissionThreshold(detectionProps.getFastAdmissionThreshold());
-        detection.setRejectedAccessThreshold(detectionProps.getRejectedAccessThreshold());
-        detection.setEnableConsistentSampling(detectionProps.isEnableConsistentSampling());
-        detection.setCapacityUsageThreshold(detectionProps.getCapacityUsageThreshold());
-        config.setDetection(detection);
-
-        // 转换Storage配置
-        HotKeyProperties.Storage storageProps = properties.getStorage();
-        HotKeyConfig.Storage storage = new HotKeyConfig.Storage();
-        storage.setEnabled(storageProps.isEnabled());
-        storage.setMaximumSize(storageProps.getMaximumSize());
-        storage.setExpireAfterWrite(storageProps.getExpireAfterWrite());
-        storage.setRecordStats(storageProps.isRecordStats());
-        config.setStorage(storage);
-
-        // 转换Recorder配置
-        HotKeyProperties.Recorder recorderProps = properties.getRecorder();
-        HotKeyConfig.Recorder recorder = new HotKeyConfig.Recorder();
-        recorder.setMaxCapacity(recorderProps.getMaxCapacity());
-        recorder.setWindowSize(recorderProps.getWindowSize());
-        recorder.setInactiveExpireTime(recorderProps.getInactiveExpireTime());
-        config.setRecorder(recorder);
-
-        // 转换Monitor配置
-        HotKeyProperties.Monitor monitorProps = properties.getMonitor();
-        HotKeyConfig.Monitor monitor = new HotKeyConfig.Monitor();
-        monitor.setInterval(monitorProps.getInterval());
-        config.setMonitor(monitor);
-
-        // 转换Refresh配置
-        HotKeyProperties.Refresh refreshProps = properties.getRefresh();
-        HotKeyConfig.Refresh refresh = new HotKeyConfig.Refresh();
-        refresh.setEnabled(refreshProps.isEnabled());
-        refresh.setInterval(refreshProps.getInterval());
-        refresh.setMaxFailureCount(refreshProps.getMaxFailureCount());
-        config.setRefresh(refresh);
+        config.setDetection(convertDetectionConfig(properties.getDetection()));
+        config.setStorage(convertStorageConfig(properties.getStorage()));
+        config.setRecorder(convertRecorderConfig(properties.getRecorder()));
+        config.setMonitor(convertMonitorConfig(properties.getMonitor()));
+        config.setRefresh(convertRefreshConfig(properties.getRefresh()));
 
         log.info("热Key检测配置初始化完成: enabled={}, hotKeyQpsThreshold={}, warmKeyQpsThreshold={}, recorderMaxCapacity={}", 
             config.isEnabled(), 
@@ -105,6 +59,85 @@ public class HotKeyAutoConfiguration {
             config.getDetection().getWarmKeyQpsThreshold(),
             config.getRecorder().getMaxCapacity());
         return config;
+    }
+
+    /**
+     * 转换Detection配置
+     *
+     * @param props 属性配置
+     * @return Detection配置对象
+     */
+    private HotKeyConfig.Detection convertDetectionConfig(HotKeyProperties.Detection props) {
+        HotKeyConfig.Detection detection = new HotKeyConfig.Detection();
+        detection.setWindowSize(props.getWindowSize());
+        detection.setTopN(props.getTopN());
+        detection.setHotKeyQpsThreshold(props.getHotKeyQpsThreshold());
+        detection.setWarmKeyQpsThreshold(props.getWarmKeyQpsThreshold());
+        detection.setPromotionInterval(props.getPromotionInterval());
+        detection.setDemotionInterval(props.getDemotionInterval());
+        detection.setMaxStatsCapacity(props.getMaxStatsCapacity());
+        detection.setAdmissionMinFrequency(props.getAdmissionMinFrequency());
+        detection.setSamplingRate(props.getSamplingRate());
+        detection.setFastAdmissionThreshold(props.getFastAdmissionThreshold());
+        detection.setRejectedAccessThreshold(props.getRejectedAccessThreshold());
+        detection.setEnableConsistentSampling(props.isEnableConsistentSampling());
+        detection.setCapacityUsageThreshold(props.getCapacityUsageThreshold());
+        return detection;
+    }
+
+    /**
+     * 转换Storage配置
+     *
+     * @param props 属性配置
+     * @return Storage配置对象
+     */
+    private HotKeyConfig.Storage convertStorageConfig(HotKeyProperties.Storage props) {
+        HotKeyConfig.Storage storage = new HotKeyConfig.Storage();
+        storage.setEnabled(props.isEnabled());
+        storage.setMaximumSize(props.getMaximumSize());
+        storage.setExpireAfterWrite(props.getExpireAfterWrite());
+        storage.setRecordStats(props.isRecordStats());
+        return storage;
+    }
+
+    /**
+     * 转换Recorder配置
+     *
+     * @param props 属性配置
+     * @return Recorder配置对象
+     */
+    private HotKeyConfig.Recorder convertRecorderConfig(HotKeyProperties.Recorder props) {
+        HotKeyConfig.Recorder recorder = new HotKeyConfig.Recorder();
+        recorder.setMaxCapacity(props.getMaxCapacity());
+        recorder.setWindowSize(props.getWindowSize());
+        recorder.setInactiveExpireTime(props.getInactiveExpireTime());
+        return recorder;
+    }
+
+    /**
+     * 转换Monitor配置
+     *
+     * @param props 属性配置
+     * @return Monitor配置对象
+     */
+    private HotKeyConfig.Monitor convertMonitorConfig(HotKeyProperties.Monitor props) {
+        HotKeyConfig.Monitor monitor = new HotKeyConfig.Monitor();
+        monitor.setInterval(props.getInterval());
+        return monitor;
+    }
+
+    /**
+     * 转换Refresh配置
+     *
+     * @param props 属性配置
+     * @return Refresh配置对象
+     */
+    private HotKeyConfig.Refresh convertRefreshConfig(HotKeyProperties.Refresh props) {
+        HotKeyConfig.Refresh refresh = new HotKeyConfig.Refresh();
+        refresh.setEnabled(props.isEnabled());
+        refresh.setInterval(props.getInterval());
+        refresh.setMaxFailureCount(props.getMaxFailureCount());
+        return refresh;
     }
 
     /**
@@ -121,14 +154,21 @@ public class HotKeyAutoConfiguration {
     /**
      * 热Key监控器
      * 注意：监控器作为HotKeyClient的内部属性，直接从HotKeyClient获取
+     *
+     * @param hotKeyClient 热Key客户端
+     * @return 热Key监控器，如果未启用则返回null
      */
     @Bean
     @ConditionalOnMissingBean
     @ConditionalOnProperty(prefix = "hotkey.monitor", name = "enabled", havingValue = "true", matchIfMissing = true)
     public IHotKeyMonitor hotKeyMonitor(IHotKeyClient hotKeyClient) {
+        if (hotKeyClient == null || !hotKeyClient.isEnabled()) {
+            log.warn("HotKeyClient未启用，跳过监控器Bean注册");
+            return null;
+        }
         IHotKeyMonitor monitor = hotKeyClient.getHotKeyMonitor();
         if (monitor == null) {
-            log.warn("HotKeyClient未启用或监控器未初始化");
+            log.warn("HotKeyClient监控器未初始化");
         }
         return monitor;
     }
@@ -136,6 +176,9 @@ public class HotKeyAutoConfiguration {
     /**
      * 热Key监控JMX MBean
      * 通过JMX暴露监控数据，支持JConsole、VisualVM等工具查看
+     *
+     * @param hotKeyMonitor 热Key监控器
+     * @return JMX MBean，如果监控器未初始化则返回null
      */
     @Bean
     @ConditionalOnMissingBean
@@ -146,27 +189,6 @@ public class HotKeyAutoConfiguration {
             return null;
         }
         return new HotKeyMonitorMBean(hotKeyMonitor);
-    }
-
-    /**
-     * 热Key监控Prometheus指标绑定器
-     * 条件：只有当MeterRegistry存在时才注册（即项目已集成Micrometer）
-     */
-    @Bean
-    @ConditionalOnMissingBean
-    @ConditionalOnClass(MeterRegistry.class)
-    @ConditionalOnBean({IHotKeyMonitor.class, MeterRegistry.class})
-    @ConditionalOnProperty(prefix = "hotkey.monitor.prometheus", name = "enabled", havingValue = "true", matchIfMissing = true)
-    public HotKeyMetrics hotKeyMetrics(IHotKeyMonitor hotKeyMonitor, 
-                                       MeterRegistry meterRegistry,
-                                       @Value("${spring.application.name:hotkey}") String applicationName) {
-        if (hotKeyMonitor == null) {
-            log.warn("热Key监控器未初始化，跳过Prometheus指标注册");
-            return null;
-        }
-        HotKeyMetrics metrics = new HotKeyMetrics(meterRegistry, hotKeyMonitor, applicationName);
-        metrics.bindTo();
-        return metrics;
     }
 
     /**
@@ -183,36 +205,17 @@ public class HotKeyAutoConfiguration {
 
         @Scheduled(fixedDelayString = "${hotkey.monitor.interval:60000}")
         public void scheduleMonitor() {
-            if (monitor instanceof HotKeyMonitor) {
-                ((HotKeyMonitor) monitor).monitor();
+            if (monitor != null) {
+                try {
+                    monitor.getMonitorInfo();
+                    if (monitor instanceof HotKeyMonitor) {
+                        ((HotKeyMonitor) monitor).monitor();
+                    }
+                } catch (Exception e) {
+                    log.error("监控任务执行失败", e);
+                }
             }
         }
     }
 
-    /**
-     * Prometheus指标更新调度器
-     * 定期更新Counter指标（Gauge指标会自动更新）
-     */
-    @Configuration
-    @ConditionalOnClass(MeterRegistry.class)
-    @ConditionalOnBean({IHotKeyMonitor.class, HotKeyMetrics.class})
-    @ConditionalOnProperty(prefix = "hotkey.monitor.prometheus", name = "enabled", havingValue = "true", matchIfMissing = true)
-    static class PrometheusMetricsScheduler {
-        private final HotKeyMetrics hotKeyMetrics;
-        
-        public PrometheusMetricsScheduler(HotKeyMetrics hotKeyMetrics) {
-            this.hotKeyMetrics = hotKeyMetrics;
-        }
-        
-        /**
-         * 定期更新Counter指标
-         * 频率：每分钟更新一次（与监控任务同步）
-         */
-        @Scheduled(fixedDelayString = "${hotkey.monitor.interval:60000}")
-        public void updateMetrics() {
-            if (hotKeyMetrics != null) {
-                hotKeyMetrics.updateCounters();
-            }
-        }
-    }
 }

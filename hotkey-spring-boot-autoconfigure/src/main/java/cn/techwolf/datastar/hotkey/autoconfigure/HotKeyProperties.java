@@ -111,11 +111,13 @@ public class HotKeyProperties {
 
     /**
      * Prometheus监控配置
+     * 注意：此配置类目前主要用于配置绑定，实际启用控制通过 @ConditionalOnProperty 实现
      */
     @Data
     public static class Prometheus {
         /**
          * 是否启用Prometheus指标
+         * 默认值：true
          */
         private boolean enabled = true;
     }

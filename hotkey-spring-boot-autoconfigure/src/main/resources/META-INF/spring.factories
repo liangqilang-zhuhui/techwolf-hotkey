@@ -1,2 +1,3 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-cn.techwolf.datastar.hotkey.autoconfigure.HotKeyAutoConfiguration
+cn.techwolf.datastar.hotkey.autoconfigure.HotKeyAutoConfiguration,\
+cn.techwolf.datastar.hotkey.autoconfigure.HotKeyMetricsConfig
