@@ -281,6 +281,26 @@ public class HotKeyClient implements IHotKeyClient {
         }
     }
 
+    @Override
+    public void removeCache(String key) {
+        if (!enabled || key == null) {
+            return;
+        }
+        // 如果是热Key，则从缓存中删除，同时从注册表中移除，避免后续无意义的刷新尝试
+        if (isHotKey(key)) {
+            // 1. 从缓存中移除
+            hotKeyStorage.remove(key);
+            // 2. 从注册表中移除，避免后续无意义的刷新尝试
+            // 注意：remove方法会同时清理失败计数
+            if (cacheDataUpdater != null) {
+                cacheDataUpdater.remove(key);
+            }
+            if (log.isDebugEnabled()) {
+                log.debug("删除热Key缓存完成, key: {}", key);
+            }
+        }
+    }
+
     /**
      * 判断是否为热Key（内部方法，用于getFromCache和updateCache）
      *

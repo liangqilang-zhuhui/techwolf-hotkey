@@ -160,6 +160,7 @@ public class CacheDataUpdater implements ICacheDataUpdater {
 
     /**
      * 移除指定key的数据获取回调函数
+     * 同时清理失败计数，避免残留数据
      *
      * @param key Redis key
      */
@@ -170,6 +171,8 @@ public class CacheDataUpdater implements ICacheDataUpdater {
         }
         try {
             Function<String, String> removed = registry.remove(key);
+            // 同时清理失败计数，避免残留数据
+            refreshFailureCount.remove(key);
             if (removed != null) {
                 log.debug("移除数据获取回调函数成功, key: {}", key);
             } else {

@@ -1,9 +1,5 @@
 package cn.techwolf.datastar.hotkey;
 
-import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
-import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
-import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
-
 import java.util.function.Function;
 
 /**
@@ -47,6 +43,15 @@ public interface IHotKeyClient {
      * @param value 从Redis获取的值（可能为null）
      */
     void updateCache(String key, String value);
+
+    /**
+     * 删除热Key缓存
+     * 业务逻辑：如果是热Key，则从本地缓存中删除
+     * 使用场景：删除Redis key时，如果是热Key，需要清理本地缓存
+     *
+     * @param key Redis key
+     */
+    void removeCache(String key);
 
     /**
      * 检查是否启用
