@@ -95,7 +95,7 @@ http://localhost:8080/actuator/prometheus
 
 ## 暴露的指标
 
-热Key监控模块共注册 **14个 Gauge 指标**，所有指标都包含 `application` 标签用于区分不同应用实例。
+热Key监控模块共注册 **16个 Gauge 指标**，所有指标都包含 `application` 标签用于区分不同应用实例。
 
 ### 基础指标
 
@@ -109,14 +109,12 @@ http://localhost:8080/actuator/prometheus
 | 指标名称 | 描述 | 单位 | 标签 |
 |---------|------|------|------|
 | `hotkey_recorder_size` | 访问记录器大小 | 个 | application |
-| `hotkey_recorder_memory_size` | 访问记录器内存大小 | 字节 | application |
 
 ### 更新器指标
 
 | 指标名称 | 描述 | 单位 | 标签 |
 |---------|------|------|------|
 | `hotkey_updater_size` | 更新器大小 | 个 | application |
-| `hotkey_updater_memory_size` | 更新器内存大小 | 字节 | application |
 
 ### 访问统计指标
 
@@ -131,8 +129,11 @@ http://localhost:8080/actuator/prometheus
 | 指标名称 | 描述 | 单位 | 标签 |
 |---------|------|------|------|
 | `hotkey_hot_access_count` | 热Key访问次数 | 次 | application |
+| `hotkey_hot_access_qps` | 热Key访问QPS（每秒请求数） | 请求/秒 | application |
 | `hotkey_hot_hit_count` | 热Key缓存命中次数 | 次 | application |
+| `hotkey_hot_hit_qps` | 热Key访问命中QPS（每秒请求数，从本地缓存获取） | 请求/秒 | application |
 | `hotkey_hot_miss_count` | 热Key缓存未命中次数 | 次 | application |
+| `hotkey_hot_miss_qps` | 热Key访问未命中QPS（每秒请求数，需要访问Redis） | 请求/秒 | application |
 | `hotkey_hit_rate` | 热Key缓存命中率 | 0.0-1.0 | application |
 | `hotkey_traffic_ratio` | 热Key流量占比 | 0.0-1.0 | application |
 
@@ -207,9 +208,6 @@ hotkey_traffic_ratio{application="hotkey-demo"} * 100
 ```promql
 # 访问记录器内存使用（MB）
 hotkey_recorder_memory_size{application="hotkey-demo"} / 1024 / 1024
-
-# 更新器内存使用（MB）
-hotkey_updater_memory_size{application="hotkey-demo"} / 1024 / 1024
 ```
 
 #### 热Key访问统计
@@ -217,11 +215,20 @@ hotkey_updater_memory_size{application="hotkey-demo"} / 1024 / 1024
 # 热Key访问总次数
 hotkey_hot_access_count{application="hotkey-demo"}
 
+# 热Key访问QPS（每秒请求数）- 推荐使用，比计算 hotkey_qps * hotkey_traffic_ratio 更简单准确
+hotkey_hot_access_qps{application="hotkey-demo"}
+
 # 热Key缓存命中次数
 hotkey_hot_hit_count{application="hotkey-demo"}
 
+# 热Key访问命中QPS（每秒请求数，从本地缓存获取，性能最优）
+hotkey_hot_hit_qps{application="hotkey-demo"}
+
 # 热Key缓存未命中次数
 hotkey_hot_miss_count{application="hotkey-demo"}
+
+# 热Key访问未命中QPS（每秒请求数，需要访问Redis）
+hotkey_hot_miss_qps{application="hotkey-demo"}
 ```
 
 #### 总访问统计
@@ -260,6 +267,16 @@ hotkey_keys_per_second{application="hotkey-demo"}
 - **Y轴标签**：流量占比（%）
 - **图例**：热Key流量占比
 
+#### 面板5：流程漏斗监控（推荐）
+- **查询1（总查询QPS）**：`hotkey_qps{application="hotkey-demo"}`
+- **查询2（热Key访问QPS）**：`hotkey_hot_access_qps{application="hotkey-demo"}`
+- **查询3（热Key命中QPS）**：`hotkey_hot_hit_qps{application="hotkey-demo"}`
+- **查询4（热Key未命中QPS）**：`hotkey_hot_miss_qps{application="hotkey-demo"}`
+- **可视化类型**：Graph（多条线）
+- **Y轴标签**：QPS
+- **图例**：总查询QPS、热Key访问QPS、热Key命中QPS、热Key未命中QPS
+- **说明**：展示完整的查询流程漏斗，便于分析缓存效果和Redis访问压力
+
 ## 架构设计
 
 ### 类结构
@@ -277,7 +294,7 @@ HotKeyMetricsConfig
 1. **初始化阶段**：
    - Spring Boot 启动时，`HotKeyMetricsConfig` 检测到 `MeterRegistry` 存在
    - 应用启动完成后（`ApplicationReadyEvent`），自动注册所有指标
-   - 共注册 14 个 Gauge 指标
+   - 共注册 16 个 Gauge 指标
 
 2. **数据采集阶段**：
    - Gauge 指标：每次 Prometheus 抓取时自动调用 lambda 函数获取当前值
@@ -307,7 +324,7 @@ Prometheus 指标功能在以下条件**全部满足**时才会启用：
 3. **指标标签**：所有指标都包含 `application` 标签，用于区分不同应用实例
 4. **配置优先级**：可以通过 `hotkey.monitor.prometheus.enabled=false` 禁用 Prometheus 指标
 5. **默认启用**：Prometheus 指标默认启用，无需额外配置即可使用
-6. **指标数量**：共注册 14 个 Gauge 指标，覆盖热Key监控的所有关键指标
+6. **指标数量**：共注册 16 个 Gauge 指标，覆盖热Key监控的所有关键指标
 
 ## 故障排查
 
@@ -345,7 +362,7 @@ Prometheus 指标功能在以下条件**全部满足**时才会启用：
 
 3. 检查 `hotkey.enabled=true` 和 `hotkey.monitor.prometheus.enabled=true`
 
-4. 查看应用日志，确认是否有 "HotKey Prometheus指标注册成功，共注册14个指标" 的日志
+4. 查看应用日志，确认是否有 "HotKey Prometheus指标注册成功，共注册16个指标" 的日志
 
 ### 问题2：指标值为 0
 

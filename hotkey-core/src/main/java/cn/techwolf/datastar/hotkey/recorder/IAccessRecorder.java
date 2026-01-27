@@ -59,4 +59,12 @@ public interface IAccessRecorder {
      * 注意：此方法默认异步执行，不阻塞调用线程
      */
     void cleanupKeys();
+
+    /**
+     * 估算访问记录器的内存使用大小（字节）
+     * 使用基于平均key长度的采样估算，性能优化：只采样前100个key
+     * 
+     * @return 估算的内存大小（字节）
+     */
+    long getMemorySize();
 }

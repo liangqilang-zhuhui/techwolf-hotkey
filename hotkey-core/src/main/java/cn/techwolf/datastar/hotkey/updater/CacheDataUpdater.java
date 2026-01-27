@@ -228,6 +228,56 @@ public class CacheDataUpdater implements ICacheDataUpdater {
     }
 
     /**
+     * 估算缓存数据更新器的内存使用大小（字节）
+     * 使用基于平均key长度的估算公式
+     * 性能优化：只采样前100个key计算平均长度，避免遍历所有key
+     * 
+     * @return 估算的内存大小（字节）
+     */
+    @Override
+    public long getMemorySize() {
+        int size = registry.size();
+        if (size == 0) {
+            return 0L;
+        }
+        
+        // 计算平均key长度（采样前100个）
+        int sampleSize = Math.min(size, 100);
+        int totalKeyLength = 0;
+        int count = 0;
+        for (String key : registry.keySet()) {
+            if (count >= sampleSize) {
+                break;
+            }
+            totalKeyLength += key != null ? key.length() : 0;
+            count++;
+        }
+        int avgKeyLength = count > 0 ? totalKeyLength / count : 20; // 默认20字符
+        
+        // 每个key的内存估算：
+        // - String对象：16(对象头) + 8(引用) + 4(hash) + 4(对齐) + 16(char[]对象头) + 4(长度) + 4(对齐) + 字符数*2
+        long stringSize = 16 + 8 + 4 + 4 + 16 + 4 + 4 + (avgKeyLength * 2L);
+        stringSize = (stringSize + 7) & ~7; // 对齐到8字节
+        
+        // Function对象（lambda）：约40字节
+        long functionSize = 40L;
+        
+        // ConcurrentHashMap.Entry：约48字节
+        long entrySize = 48L;
+        
+        // refreshFailureCount中的Integer：对象头(16) + int值(4) + 对齐(4) = 约24字节
+        long integerSize = 24L;
+        
+        // 每个条目的总大小
+        long perEntrySize = stringSize + functionSize + entrySize + integerSize;
+        
+        // ConcurrentHashMap基础开销 + 数组开销
+        long baseSize = 48L + (size * 2 * 8L); // 假设负载因子0.5
+        
+        return baseSize + (size * perEntrySize);
+    }
+
+    /**
      * 检查key是否已注册
      *
      * @param key Redis key

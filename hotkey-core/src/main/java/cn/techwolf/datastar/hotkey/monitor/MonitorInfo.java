@@ -44,11 +44,6 @@ public class MonitorInfo implements Serializable {
     private int updaterSize;
 
     /**
-     * 缓存数据更新器注册表的内存大小（估算，单位：字节）
-     */
-    private long updaterMemorySize;
-
-    /**
      * wrapGet总调用次数
      */
     private long totalWrapGetCount;
@@ -87,6 +82,23 @@ public class MonitorInfo implements Serializable {
      * 热Key流量占比（0.0-1.0）
      */
     private double hotKeyTrafficRatio;
+
+    /**
+     * 热Key访问的QPS（每秒请求数）
+     */
+    private double hotKeyAccessQps;
+
+    /**
+     * 热Key访问命中的QPS（每秒请求数）
+     * 表示从本地缓存获取的QPS，性能最优
+     */
+    private double hotKeyHitQps;
+
+    /**
+     * 热Key访问未命中的QPS（每秒请求数）
+     * 表示需要访问Redis的QPS
+     */
+    private double hotKeyMissQps;
 
     // Getters and Setters
     public Set<String> getHotKeys() {
@@ -135,14 +147,6 @@ public class MonitorInfo implements Serializable {
 
     public void setUpdaterSize(int updaterSize) {
         this.updaterSize = updaterSize;
-    }
-
-    public long getUpdaterMemorySize() {
-        return updaterMemorySize;
-    }
-
-    public void setUpdaterMemorySize(long updaterMemorySize) {
-        this.updaterMemorySize = updaterMemorySize;
     }
 
     public long getTotalWrapGetCount() {
@@ -209,6 +213,30 @@ public class MonitorInfo implements Serializable {
         this.hotKeyTrafficRatio = hotKeyTrafficRatio;
     }
 
+    public double getHotKeyAccessQps() {
+        return hotKeyAccessQps;
+    }
+
+    public void setHotKeyAccessQps(double hotKeyAccessQps) {
+        this.hotKeyAccessQps = hotKeyAccessQps;
+    }
+
+    public double getHotKeyHitQps() {
+        return hotKeyHitQps;
+    }
+
+    public void setHotKeyHitQps(double hotKeyHitQps) {
+        this.hotKeyHitQps = hotKeyHitQps;
+    }
+
+    public double getHotKeyMissQps() {
+        return hotKeyMissQps;
+    }
+
+    public void setHotKeyMissQps(double hotKeyMissQps) {
+        this.hotKeyMissQps = hotKeyMissQps;
+    }
+
     @Override
     public String toString() {
         return "MonitorInfo{" +
@@ -217,7 +245,6 @@ public class MonitorInfo implements Serializable {
                 ", recorderSize=" + recorderSize +
                 ", recorderMemorySize=" + recorderMemorySize +
                 ", updaterSize=" + updaterSize +
-                ", updaterMemorySize=" + updaterMemorySize +
                 ", totalWrapGetCount=" + totalWrapGetCount +
                 ", wrapGetQps=" + wrapGetQps +
                 ", keysPerSecond=" + keysPerSecond +
@@ -226,6 +253,9 @@ public class MonitorInfo implements Serializable {
                 ", hotKeyMissCount=" + hotKeyMissCount +
                 ", hotKeyHitRate=" + hotKeyHitRate +
                 ", hotKeyTrafficRatio=" + hotKeyTrafficRatio +
+                ", hotKeyAccessQps=" + hotKeyAccessQps +
+                ", hotKeyHitQps=" + hotKeyHitQps +
+                ", hotKeyMissQps=" + hotKeyMissQps +
                 '}';
     }
 }

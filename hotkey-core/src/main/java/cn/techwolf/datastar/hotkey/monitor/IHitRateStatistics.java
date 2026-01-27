@@ -89,6 +89,32 @@ public interface IHitRateStatistics {
     double getHotKeyTrafficRatio();
 
     /**
+     * 获取热Key访问的QPS（每秒请求数）
+     * 使用10秒滑动窗口统计热Key访问次数
+     *
+     * @return 热Key访问的QPS
+     */
+    double getHotKeyAccessQps();
+
+    /**
+     * 获取热Key访问命中的QPS（每秒请求数）
+     * 使用10秒滑动窗口统计热Key缓存命中次数
+     * 表示从本地缓存获取的QPS，性能最优
+     *
+     * @return 热Key访问命中的QPS
+     */
+    double getHotKeyHitQps();
+
+    /**
+     * 获取热Key访问未命中的QPS（每秒请求数）
+     * 使用10秒滑动窗口统计热Key缓存未命中次数
+     * 表示需要访问Redis的QPS
+     *
+     * @return 热Key访问未命中的QPS
+     */
+    double getHotKeyMissQps();
+
+    /**
      * 重置统计数据
      */
     void reset();

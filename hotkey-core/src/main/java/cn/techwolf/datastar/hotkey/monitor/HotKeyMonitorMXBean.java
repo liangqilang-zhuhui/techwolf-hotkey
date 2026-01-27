@@ -51,13 +51,6 @@ public interface HotKeyMonitorMXBean {
     int getUpdaterSize();
 
     /**
-     * 获取缓存数据更新器注册表的内存大小（估算，单位：字节）
-     *
-     * @return 缓存数据更新器注册表的内存大小
-     */
-    long getUpdaterMemorySize();
-
-    /**
      * 获取wrapGet总调用次数
      *
      * @return wrapGet总调用次数

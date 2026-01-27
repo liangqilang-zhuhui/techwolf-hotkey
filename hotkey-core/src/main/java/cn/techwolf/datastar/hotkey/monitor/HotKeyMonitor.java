@@ -24,7 +24,7 @@ public class HotKeyMonitor implements IHotKeyMonitor {
     /**
      * 数字格式化器（保留2位小数）
      */
-    private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.00");
+    private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("0.00");
 
     /**
      * 热Key管理器
@@ -82,22 +82,24 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             MonitorInfo info = getMonitorInfo();
 
             // 输出监控日志
-            log.info("========== 热Key监控统计 ==========");
-            log.info("热Key数量: {}", info.getHotKeyCount());
-            log.info("热Key列表: {}", info.getHotKeys());
-            log.info("数据存储层大小: {}", info.getStorageSize());
-            log.info("访问记录模块数据量: {}", info.getRecorderSize());
-            log.info("访问记录模块内存大小(估算): {} bytes", info.getRecorderMemorySize());
-            log.info("缓存数据更新器注册表数据量: {}", info.getUpdaterSize());
-            log.info("缓存数据更新器注册表内存大小(估算): {} bytes", info.getUpdaterMemorySize());
-            log.info("wrapGet总调用次数: {}", info.getTotalWrapGetCount());
-            log.info("wrapGet的QPS: {}", formatDouble(info.getWrapGetQps()));
-            log.info("每秒访问的不同key数量: {}", formatDouble(info.getKeysPerSecond()));
-            log.info("热Key访问总次数: {}", info.getHotKeyAccessCount());
-            log.info("热Key缓存命中次数: {}", info.getHotKeyHitCount());
-            log.info("热Key缓存未命中次数: {}", info.getHotKeyMissCount());
-            log.info("热Key命中率: {}%", formatDouble(info.getHotKeyHitRate() * 100));
-            log.info("热Key流量占比: {}%", formatDouble(info.getHotKeyTrafficRatio() * 100));
+            log.debug("========== 热Key监控统计 ==========");
+            log.debug("热Key数量: {}", info.getHotKeyCount());
+            log.debug("热Key列表: {}", info.getHotKeys());
+            log.debug("数据存储层大小: {}", info.getStorageSize());
+            log.debug("访问记录模块数据量: {}", info.getRecorderSize());
+            log.debug("访问记录模块内存大小(估算): {} bytes", info.getRecorderMemorySize());
+            log.debug("缓存数据更新器注册表数据量: {}", info.getUpdaterSize());
+            log.debug("wrapGet总调用次数: {}", info.getTotalWrapGetCount());
+            log.debug("wrapGet的QPS: {}", formatDouble(info.getWrapGetQps()));
+            log.debug("每秒访问的不同key数量: {}", formatDouble(info.getKeysPerSecond()));
+            log.debug("热Key访问总次数: {}", info.getHotKeyAccessCount());
+            log.debug("热Key访问QPS: {}", formatDouble(info.getHotKeyAccessQps()));
+            log.debug("热Key缓存命中次数: {}", info.getHotKeyHitCount());
+            log.debug("热Key访问命中QPS: {}", formatDouble(info.getHotKeyHitQps()));
+            log.debug("热Key缓存未命中次数: {}", info.getHotKeyMissCount());
+            log.debug("热Key访问未命中QPS: {}", formatDouble(info.getHotKeyMissQps()));
+            log.debug("热Key命中率: {}%", formatDouble(info.getHotKeyHitRate() * 100));
+            log.debug("热Key流量占比: {}%", formatDouble(info.getHotKeyTrafficRatio() * 100));
             log.info("====================================");
         } catch (Exception e) {
             log.error("监控失败", e);
@@ -139,22 +141,19 @@ public class HotKeyMonitor implements IHotKeyMonitor {
         if (accessRecorder != null) {
             int recorderSize = accessRecorder.size();
             info.setRecorderSize(recorderSize);
-            // 估算内存大小（每个key约100字节）
-            info.setRecorderMemorySize(recorderSize * 100L);
+            // 使用采样估算方法计算内存大小（基于平均key长度）
+            info.setRecorderMemorySize(accessRecorder.getMemorySize());
         } else {
             info.setRecorderSize(0);
             info.setRecorderMemorySize(0L);
         }
 
-        // 获取缓存数据更新器注册表的数据量和大小
+        // 获取缓存数据更新器注册表的数据量
         if (cacheDataUpdater != null) {
             int updaterSize = cacheDataUpdater.size();
             info.setUpdaterSize(updaterSize);
-            // 估算内存大小（每个key和Function对象约200字节）
-            info.setUpdaterMemorySize(updaterSize * 200L);
         } else {
             info.setUpdaterSize(0);
-            info.setUpdaterMemorySize(0L);
         }
 
         // 获取命中率统计数据
@@ -167,6 +166,9 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             info.setHotKeyMissCount(hitRateStatistics.getHotKeyMissCount());
             info.setHotKeyHitRate(hitRateStatistics.getHotKeyHitRate());
             info.setHotKeyTrafficRatio(hitRateStatistics.getHotKeyTrafficRatio());
+            info.setHotKeyAccessQps(hitRateStatistics.getHotKeyAccessQps());
+            info.setHotKeyHitQps(hitRateStatistics.getHotKeyHitQps());
+            info.setHotKeyMissQps(hitRateStatistics.getHotKeyMissQps());
         } else {
             info.setTotalWrapGetCount(0);
             info.setWrapGetQps(0.0);
@@ -176,6 +178,9 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             info.setHotKeyMissCount(0);
             info.setHotKeyHitRate(0.0);
             info.setHotKeyTrafficRatio(0.0);
+            info.setHotKeyAccessQps(0.0);
+            info.setHotKeyHitQps(0.0);
+            info.setHotKeyMissQps(0.0);
         }
         
         return info;

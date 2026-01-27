@@ -90,7 +90,7 @@ public class HotKeyMetricsConfig implements ApplicationListener<ApplicationReady
         registerAllMetrics(monitor, commonTags);
 
         metricsRegistered = true;
-        log.info("HotKey Prometheus指标注册成功，共注册14个指标");
+        log.info("HotKey Prometheus指标注册成功，共注册16个指标");
     }
 
     /**
@@ -121,7 +121,6 @@ public class HotKeyMetricsConfig implements ApplicationListener<ApplicationReady
         
         // 更新器指标
         registerGauge("hotkey.updater.size", "更新器大小", monitor, MonitorInfo::getUpdaterSize, tags);
-        registerGauge("hotkey.updater.memory.size", "更新器内存大小（字节）", monitor, MonitorInfo::getUpdaterMemorySize, tags);
         
         // 访问统计指标
         registerGauge("hotkey.total.access.count", "总访问次数（wrapGet调用次数）", monitor, MonitorInfo::getTotalWrapGetCount, tags);
@@ -130,8 +129,11 @@ public class HotKeyMetricsConfig implements ApplicationListener<ApplicationReady
         
         // 热Key统计指标
         registerGauge("hotkey.hot.access.count", "热Key访问次数", monitor, MonitorInfo::getHotKeyAccessCount, tags);
+        registerGauge("hotkey.hot.access.qps", "热Key访问QPS（每秒请求数）", monitor, MonitorInfo::getHotKeyAccessQps, tags);
         registerGauge("hotkey.hot.hit.count", "热Key缓存命中次数", monitor, MonitorInfo::getHotKeyHitCount, tags);
+        registerGauge("hotkey.hot.hit.qps", "热Key访问命中QPS（每秒请求数，从本地缓存获取）", monitor, MonitorInfo::getHotKeyHitQps, tags);
         registerGauge("hotkey.hot.miss.count", "热Key缓存未命中次数", monitor, MonitorInfo::getHotKeyMissCount, tags);
+        registerGauge("hotkey.hot.miss.qps", "热Key访问未命中QPS（每秒请求数，需要访问Redis）", monitor, MonitorInfo::getHotKeyMissQps, tags);
         registerGauge("hotkey.hit.rate", "热Key缓存命中率（0-1之间）", monitor, MonitorInfo::getHotKeyHitRate, tags);
         registerGauge("hotkey.traffic.ratio", "热Key流量占比（0-1之间）", monitor, MonitorInfo::getHotKeyTrafficRatio, tags);
     }

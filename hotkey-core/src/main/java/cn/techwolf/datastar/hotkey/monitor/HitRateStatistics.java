@@ -70,6 +70,21 @@ public class HitRateStatistics implements IHitRateStatistics {
     private final LongAdder windowAccessCount = new LongAdder();
 
     /**
+     * 窗口内的热Key访问次数（用于计算热Key访问QPS）
+     */
+    private final LongAdder windowHotKeyAccessCount = new LongAdder();
+
+    /**
+     * 窗口内的热Key命中次数（用于计算热Key命中QPS）
+     */
+    private final LongAdder windowHotKeyHitCount = new LongAdder();
+
+    /**
+     * 窗口内的热Key未命中次数（用于计算热Key未命中QPS）
+     */
+    private final LongAdder windowHotKeyMissCount = new LongAdder();
+
+    /**
      * 窗口内访问的不同key集合（用于计算每秒key数量）
      * 内存优化：限制最大大小，防止OOM
      */
@@ -103,16 +118,22 @@ public class HitRateStatistics implements IHitRateStatistics {
     @Override
     public void recordHotKeyAccess() {
         hotKeyAccessCount.increment();
+        // 同时更新窗口统计，用于计算热Key访问QPS
+        windowHotKeyAccessCount.increment();
     }
 
     @Override
     public void recordHotKeyHit() {
         hotKeyHitCount.increment();
+        // 同时更新窗口统计，用于计算热Key命中QPS
+        windowHotKeyHitCount.increment();
     }
 
     @Override
     public void recordHotKeyMiss() {
         hotKeyMissCount.increment();
+        // 同时更新窗口统计，用于计算热Key未命中QPS
+        windowHotKeyMissCount.increment();
     }
 
     /**
@@ -146,6 +167,9 @@ public class HitRateStatistics implements IHitRateStatistics {
                         // 执行窗口重置
                         windowStartTime.set(currentTime);
                         windowAccessCount.reset();
+                        windowHotKeyAccessCount.reset();
+                        windowHotKeyHitCount.reset();
+                        windowHotKeyMissCount.reset();
                         windowKeys.clear();
                         lastCleanupTime.set(currentTime);
                     }
@@ -300,12 +324,60 @@ public class HitRateStatistics implements IHitRateStatistics {
     }
 
     @Override
+    public double getHotKeyAccessQps() {
+        long currentTime = System.currentTimeMillis();
+        long windowStart = windowStartTime.get();
+        long elapsed = currentTime - windowStart;
+
+        if (elapsed <= 0) {
+            return 0.0;
+        }
+
+        // 计算热Key访问QPS
+        long count = windowHotKeyAccessCount.sum();
+        return (count * 1000.0) / elapsed;
+    }
+
+    @Override
+    public double getHotKeyHitQps() {
+        long currentTime = System.currentTimeMillis();
+        long windowStart = windowStartTime.get();
+        long elapsed = currentTime - windowStart;
+
+        if (elapsed <= 0) {
+            return 0.0;
+        }
+
+        // 计算热Key命中QPS
+        long count = windowHotKeyHitCount.sum();
+        return (count * 1000.0) / elapsed;
+    }
+
+    @Override
+    public double getHotKeyMissQps() {
+        long currentTime = System.currentTimeMillis();
+        long windowStart = windowStartTime.get();
+        long elapsed = currentTime - windowStart;
+
+        if (elapsed <= 0) {
+            return 0.0;
+        }
+
+        // 计算热Key未命中QPS
+        long count = windowHotKeyMissCount.sum();
+        return (count * 1000.0) / elapsed;
+    }
+
+    @Override
     public void reset() {
         totalWrapGetCount.reset();
         hotKeyAccessCount.reset();
         hotKeyHitCount.reset();
         hotKeyMissCount.reset();
         windowAccessCount.reset();
+        windowHotKeyAccessCount.reset();
+        windowHotKeyHitCount.reset();
+        windowHotKeyMissCount.reset();
         windowKeys.clear();
         long currentTime = System.currentTimeMillis();
         windowStartTime.set(currentTime);

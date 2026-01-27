@@ -87,4 +87,12 @@ public interface ICacheDataUpdater {
      * @param demotedKeys 被降级的key集合
      */
     void cleanupDemotedKeys(Set<String> demotedKeys);
+
+    /**
+     * 估算缓存数据更新器的内存使用大小（字节）
+     * 使用基于平均key长度的采样估算，性能优化：只采样前100个key
+     * 
+     * @return 估算的内存大小（字节）
+     */
+    long getMemorySize();
 }
