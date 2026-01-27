@@ -1,0 +1,486 @@
+---
+description:
+globs:
+alwaysApply: true
+---
+# 项目规范
+
+## 1. 技术栈与架构
+
+### 1.1 技术栈
+- 后端框架：Spring Boot 2.7.18
+- 数据库：MySQL
+- ORM框架：MyBatis-Plus
+- 分页插件：PageHelper
+- 日志框架：SLF4J + Logback
+- 配置管理：Nacos
+- 序列化：Jackson
+
+### 1.2 项目架构
+- 分层架构：
+  - controller：接口层，处理HTTP请求
+  - service：业务层，处理业务逻辑
+  - mapper：数据访问层，处理数据库操作
+  - domain：领域模型层
+    - bo：业务对象
+    - po：持久化对象
+    - dto：数据传输对象
+  - util：工具类
+  - config：配置类
+- API接口采用RESTful风格设计，统一返回格式
+
+### 1.3 依赖管理
+- 使用 Maven 管理依赖，优先使用社区维护度高的版本
+- 统一在父POM中定义版本号，避免子模块重复定义
+- 避免循环依赖，减少依赖冲突
+
+## 2. 代码规范
+
+### 2.1 命名规范
+1. 类命名
+   - 实体类：以DO结尾，如`HiveDataDO`
+     - 必须与数据库表结构严格对应
+     - 字段名必须与数据库字段名一致
+     - 必须包含表名注解`@TableName`
+     - 必须包含主键注解`@TableId`
+   - 业务对象：以BO结尾，如`HiveDataBO`
+   - 数据传输对象：以DTO结尾
+   - 视图对象：以VO结尾
+   - 控制器：以Controller结尾
+   - 服务接口：以Service结尾
+   - 服务实现：以ServiceImpl结尾
+   - 数据访问层：以Mapper结尾
+   - 抽象类以"Abstract"或"Base"开头
+   - 异常类以"Exception"结尾
+   - 测试类以"Test"结尾
+
+2. 方法命名
+   - 查询单个：getXXX
+   - 查询列表：listXXX
+   - 分页查询：page
+   - 新增：save
+   - 修改：update
+   - 删除：delete
+
+3. 变量命名
+   - 类名采用UpperCamelCase风格
+   - 方法名、参数名、成员变量、局部变量采用lowerCamelCase风格
+   - 常量全部大写，单词间用下划线隔开
+   - 包名使用小写字母
+
+4. 数据库命名
+   - 表命名：使用小写字母，下划线分隔，复数形式
+   - 字段命名：
+     - 使用小写字母，下划线分隔
+     - 主键统一使用id
+     - 创建时间统一使用create_time
+     - 更新时间统一使用update_time
+     - 状态字段统一使用status
+   - 索引名规范：idx_字段名
+
+### 2.2 代码结构
+1. 目录结构
+```
+src/main/java/cn/techwolf/datastar/datastardemoproject/
+├── config/          # 配置类
+├── controller/      # 控制器
+│   └── request/    # 请求对象（包括内部请求和外部系统请求）
+├── domain/         # 领域模型
+│   ├── bo/        # 业务对象
+│   ├── po/        # 持久化数据库对象
+│   ├── dto/       # 外部系统返回对象
+│   ├── converter/ # 对象转换器
+│── enums/      # 自定义枚举类
+│── exceptions/# 自定义异常类
+├── mapper/         # MyBatis映射接口
+├── service/        # 服务接口
+│   └── impl/      # 服务实现
+└── util/           # 工具类
+```
+
+2. 目录职责说明
+   - `controller/request/`: 存放所有请求对象
+     - 内部接口请求对象
+     - 调用外部系统的请求对象
+   - `domain/converter/`: 存放所有对象转换器
+     - DO与BO之间的转换
+     - 其他对象之间的转换
+   - `enums`: 存放自定义枚举类
+     - 业务状态枚举
+     - 业务类型枚举
+     - 其他业务枚举
+   - `exceptions/`: 存放自定义异常类
+     - 业务异常
+     - 系统异常
+   - `domain/dto/`: 存放外部系统返回对象
+     - 第三方接口返回对象
+     - 外部系统数据对象
+
+3. 命名规范
+   - 转换器命名：`{EntityName}Converter`
+   - 请求对象命名：`{EntityName}Request`
+   - 枚举类命名：`{EntityName}Enum`
+   - 异常类命名：`{EntityName}Exception`
+   - DTO对象命名：`{EntityName}DTO`
+
+4. 代码限制
+   - 单个方法不超过80行
+   - 单个类不超过500行
+   - 方法最多5个参数，超过5个使用DTO对象
+   - 嵌套层次不超过4层
+   - 利用设计模式提高代码复用性和扩展性
+
+### 2.3 注释规范
+1. 类注释
+   - 必须包含功能描述
+   - 必须包含作者信息
+   - 必须包含创建时间
+
+2. 方法注释
+   - 必须包含功能描述
+   - 必须包含参数说明
+   - 必须包含返回值说明
+   - 必须包含异常说明
+   - 特殊逻辑必须有详细注释
+   - 代码修改添加适当的修改注释
+
+3. 字段注释
+   - 必须包含字段说明
+   - 必须包含单位说明
+   - 必须包含取值范围说明
+   - 数据库字段必须有注释
+
+## 3. 功能规范
+
+### 3.1 分页规范
+1. Service层分页接口规范
+   - 分页方法统一命名为`page`
+   - 返回类型必须为`List<T>`，不返回PageInfo对象
+   - 分页方法不接收分页参数，只接收业务查询参数
+   - 示例：
+     ```java
+     List<HiveDataBO> page(String dataName, String dataNameCn);
+     ```
+
+2. Controller层分页处理
+   - 在Controller层使用PageHelper进行分页
+   - 在Controller层进行分页信息封装
+   - 使用Responses.pagedResponse统一返回格式
+   - 示例：
+     ```java
+     @GetMapping("/page")
+     public Object page(
+         @RequestParam(defaultValue = "1") Integer pageNum,
+         @RequestParam(defaultValue = "10") Integer pageSize,
+         @RequestParam(required = false) String dataName,
+         @RequestParam(required = false) String dataNameCn) {
+
+         // 使用 PageHelper 进行分页
+         Page<HiveDataBO> page = PageHelper.startPage(pageNum, pageSize);
+         List<HiveDataBO> list = service.page(dataName, dataNameCn);
+
+         return Responses.pagedResponse(list, (int) page.getTotal(), page.getPageNum(), page.getPageSize());
+     }
+     ```
+
+3. 分页查询要求
+   - 必须使用数据库分页，避免内存分页
+   - 必须记录查询条件和分页参数
+   - 必须使用索引优化查询
+   - 大数据量查询必须使用分页
+
+### 3.2 响应格式规范
+1. 统一响应工具
+   - 必须使用`rep.cn.techwolf.datastar.common.user.portal.ResponseBuilderWithTraceId`工具类
+   - 禁止创建自定义的响应工具类
+   - 响应工具类提供以下方法：
+     - `successResponse()`: 返回成功响应，无数据
+     - `successResponse(T data)`: 返回成功响应，带数据
+     - `errorResponse(String errorMsg)`: 返回错误响应，默认错误码
+     - `errorResponse(String errorMsg, int code)`: 返回错误响应，指定错误码
+     - `pagedResponse(T data, Integer totalItems, Integer pageNum, Integer pageSize)`: 返回分页响应
+
+2. 返回类型规范
+   - 必须使用以下两个响应类：
+     - `cn.techwolf.datastar.common.rep.Response<T>`: 用于普通响应
+     - `cn.techwolf.datastar.common.rep.PaginationResponse<T>`: 用于分页响应
+   - 禁止使用其他响应类或自定义响应类
+   - 禁止使用`Object`作为返回类型
+   - Service层：
+     - 查询单个对象：返回`BO`类型
+     - 查询列表：返回`List<BO>`类型
+     - 分页查询：返回`List<BO>`类型
+     - 保存/更新：返回`BO`类型
+     - 删除：返回`void`
+   - Controller层：
+     - 查询单个对象：返回`Response<BO>`类型
+     - 查询列表：返回`Response<List<BO>>`类型
+     - 分页查询：返回`PaginationResponse<List<BO>>`类型
+     - 保存/更新：返回`Response<BO>`类型
+     - 删除：返回`Response<Void>`类型
+
+3. 返回类型示例
+   ```java
+   // Service层
+   public interface HiveDataService {
+       List<HiveDataBO> page(String location);
+       HiveDataBO getById(Long id);
+       HiveDataBO save(HiveDataBO bo);
+       HiveDataBO update(Long id, HiveDataBO bo);
+       void delete(Long id);
+   }
+
+   // Controller层
+   @RestController
+   public class HiveDataController {
+       @GetMapping("/{id}")
+       public Response<HiveDataBO> getById(@PathVariable Long id) {
+           return Responses.successResponse(service.getById(id));
+       }
+
+       @GetMapping("/page")
+       public PaginationResponse<List<HiveDataBO>> page(
+               @RequestParam Integer pageNum,
+               @RequestParam Integer pageSize,
+               @RequestParam(required = false) String location) {
+           Page<HiveDataBO> page = PageHelper.startPage(pageNum, pageSize);
+           List<HiveDataBO> list = service.page(location);
+           return Responses.pagedResponse(list, (int) page.getTotal(), page.getPageNum(), page.getPageSize());
+       }
+   }
+   ```
+
+4. 统一响应格式
+   ```json
+   {
+     "meta": {
+       "code": 0,
+       "traceId": "xxx",
+       "errorMsg": null
+     },
+     "data": {
+       "list": [],
+       "total": 0,
+       "pageNum": 1,
+       "pageSize": 10
+     }
+   }
+   ```
+
+5. 分页响应格式
+   ```json
+   {
+     "meta": {
+       "code": 0,
+       "traceId": "xxx",
+       "errorMsg": null
+     },
+     "data": [],
+     "pagination": {
+       "totalItems": 0,
+       "pageNum": 1,
+       "pageSize": 10
+     }
+   }
+   ```
+
+### 3.3 异常处理规范
+1. 异常体系
+   - 使用自定义异常体系，区分业务异常与系统异常
+   - 业务异常使用自定义异常类
+   - 有业务含义的异常应当被翻译为用户友好的提示信息
+
+2. 异常处理原则
+   - 不捕获异常后不处理或只打印日志
+   - 分层异常处理：Mapper层->Service层->Controller层
+   - 统一异常处理，在Controller层统一返回格式
+   - 异常信息需要记录日志
+
+## 4. 日志规范
+1. 日志框架
+   - 使用SLF4J API进行日志记录
+   - 生产环境默认级别为INFO
+   - 日志配置文件：
+     - 本地环境：`logback-console.xml`，日志直接打印到控制台
+     - 其他环境：`logback-file.xml`，日志输出到文件
+   - 日志文件路径：
+     - 配置方式：在 application-{env}.yml 中配置
+     - 配置项：`logging.file.path`
+     - 默认路径：`/data/logs/{项目名}`
+     - 示例：`/data/logs/dap-datastar-demo-project`
+   - 配置文件位置：
+     - 本地环境：`application-local.yml` 中配置 `logging.config: classpath:logback-console.xml`
+     - 其他环境：`application-prod.yml` 中配置 `logging.config: classpath:logback-file.xml`
+
+2. 日志级别
+   - ERROR：系统错误
+   - WARN：警告信息
+   - INFO：重要业务信息
+   - DEBUG：调试信息
+
+3. 日志内容
+   - 必须包含请求参数
+   - 必须包含响应结果
+   - 必须包含执行时间
+   - 必须包含错误堆栈
+   - 异常日志必须记录完整的堆栈信息
+   - 敏感信息（密码、证件号等）不输出到日志
+
+4. 日志格式
+   - 输出格式统一为：时间|线程|级别|类名|方法名|内容
+   - 分页查询必须记录查询条件和分页参数
+
+## 5. 数据库规范
+1. 表设计
+   - 使用MyBatis-Plus进行数据库操作
+   - 表名使用小写，单词间用下划线隔开
+   - 主键名为id，必须为bigint类型
+   - 每个表建议包含create_time, update_time, is_deleted字段
+
+2. SQL规范
+   - 避免大事务、长事务
+   - SQL语句避免使用SELECT *，明确指定字段名
+   - 分页查询使用PageHelper，避免内存分页
+   - 表结构变更必须同步更新doc/sql/ddl目录下的SQL文件
+
+3. 索引规范
+   - 索引名规范：idx_字段名
+   - 必须使用索引优化查询
+   - 避免索引失效
+
+## 6. 安全规范
+1. 数据安全
+   - 敏感数据加密存储，传输加密
+   - 密码不允许明文存储，应该使用加盐哈希算法
+   - 必须进行敏感数据加密
+
+2. 接口安全
+   - 防止SQL注入、XSS攻击、CSRF攻击
+   - 权限控制精确到按钮/接口级别
+   - 敏感操作需要二次认证
+   - 接口必须进行权限校验
+
+3. 参数校验
+   - 必须进行参数校验
+   - 必须进行权限控制
+   - 必须进行SQL注入防护
+   - 必须进行XSS防护
+   - 必须进行CSRF防护
+
+## 7. 测试规范
+1. 单元测试
+   - 必须编写单元测试
+   - 测试覆盖率不低于80%
+   - 写单元测试应当遵循FIRST原则
+   - 测试用例命名规范
+   - 避免测试用例间的依赖
+   - 使用Mock框架模拟外部依赖
+   - 测试用例必须包含正常和异常场景
+
+2. 集成测试
+   - 必须编写集成测试
+   - 测试环境配置
+   - 测试数据准备
+   - 集成测试覆盖主要业务流程
+
+3. 性能测试
+   - 必须编写性能测试
+   - 性能指标要求
+   - 压力测试要求
+   - 设计高性能和高并发的解决方案
+
+4. 安全测试
+   - 必须编写安全测试
+   - 漏洞扫描要求
+   - 渗透测试要求
+
+5. 接口测试
+   - 必须编写接口测试
+   - 接口测试用例
+   - 接口测试报告
+
+## 8. 文档规范
+1. 接口文档
+   - 必须编写接口文档
+   - 接口文档格式
+   - 接口文档更新要求
+   - API文档必须包含在doc/api目录下
+   - 文档必须包含：
+     - 接口说明
+     - 请求参数
+     - 响应参数
+     - 示例
+     - 错误码说明
+
+2. 数据库文档
+   - 必须编写数据库文档
+   - 表结构说明
+   - 字段说明
+   - 数据库表结构定义必须包含在doc/sql/ddl目录下
+
+3. 部署文档
+   - 必须编写部署文档
+   - 环境要求
+   - 部署步骤
+
+4. 使用文档
+   - 必须编写使用文档
+   - 功能说明
+   - 操作指南
+
+5. 维护文档
+   - 必须编写维护文档
+   - 运维手册
+   - 故障处理
+
+6. 文档要求
+   - 文档格式统一使用Markdown
+   - 文档必须及时更新，与代码保持同步
+
+## 9. 版本规范
+1. 版本号规范
+   - 必须使用语义化版本
+   - 版本号格式：主版本号.次版本号.修订号
+
+2. 版本控制
+   - 必须使用Git进行版本控制
+   - 必须使用分支管理
+   - 必须使用标签管理
+
+3. 提交规范
+   - 必须使用提交信息规范
+   - 必须使用合并请求规范
+   - 必须进行代码审查
+
+## 10. 部署规范
+1. 容器化
+   - 必须使用Docker容器化
+   - 必须使用Kubernetes编排
+   - 必须使用CI/CD流程
+
+2. 监控告警
+   - 必须使用监控系统
+   - 必须使用日志系统
+   - 必须使用告警系统
+
+3. 环境管理
+   - 本地环境
+   - 测试环境
+   - 预发环境
+   - 生产环境
+
+## 11. 规则优先级
+- 安全规则优先于性能规则，性能规则优先于代码风格规则
+- 文档规范与代码规范同等重要
+- 分页查询必须使用数据库分页，这是强制规则
+
+## 日志配置规范
+- 日志文件路径：
+  - 配置方式：在 application-{env}.yml 中配置
+  - 配置项：`logging.file.path`
+  - 默认路径：`/data/logs/{项目名}`
+  - 示例：`/data/logs/dap-datastar-demo-project`
+- 日志配置文件：
+  - 位置：`src/main/resources/logback-file.xml`
+  - 使用方式：通过 `<springProperty>` 引用配置文件中的路径
+  - 示例：`<springProperty scope="context" name="log.filePath" source="logging.file.path"/>`

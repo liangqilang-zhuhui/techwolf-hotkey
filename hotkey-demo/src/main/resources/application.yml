@@ -1,0 +1,56 @@
+server:
+  port: 8080
+
+spring:
+  redis:
+    host: 127.0.0.1
+    port: 6379
+    timeout: 3000
+    lettuce:
+      pool:
+        max-active: 100
+        max-idle: 20
+        min-idle: 0
+
+hotkey:
+  enabled: true                          # 是否启用，默认true
+  detection:
+    window-size: 5                      # 统计窗口大小（秒），默认60
+    top-n: 10                            # Top N数量，默认10
+    hot-key-qps-threshold: 30.0        # 热Key QPS阈值，默认3000.0
+    warm-key-qps-threshold: 10.0        # 温Key QPS阈值，默认500.0
+    promotion-interval: 5000             # 晋升间隔（毫秒），默认5000
+    demotion-interval: 60000             # 降级间隔（毫秒），默认60000
+  storage:
+    enabled: true                        # 是否启用本地缓存，默认true
+    maximum-size: 100                    # 最大缓存数量，默认100
+    expire-after-write: 60               # 过期时间（秒），默认60
+  recorder:
+    max-capacity: 15                  # 访问记录最大容量，默认10000
+    window-size: 60                      # 统计窗口大小（秒），默认60
+  monitor:
+    enabled: true                         # 是否启用监控，默认true
+    interval: 30000                       # 监控输出间隔（毫秒），默认60000
+    prometheus:
+      enabled: true                       # 启用Prometheus指标（默认启用）
+
+
+logging:
+  level:
+    cn.techwolf.datastar.hotkey: DEBUG  # 临时改为DEBUG以便查看日志
+    root: INFO
+management:
+  endpoints:
+    web:
+      base-path: /actuator  # 明确指定基础路径
+      exposure:
+        include: prometheus,health,info,metrics  # 暴露 prometheus 端点
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    export:
+      prometheus:
+        enabled: true  # 启用 Prometheus 导出
+    tags:
+      application: ${spring.application.name:hotkey-demo}
