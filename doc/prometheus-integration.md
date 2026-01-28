@@ -122,7 +122,6 @@ http://localhost:8080/actuator/prometheus
 |---------|------|------|------|
 | `hotkey_total_access_count` | 总访问次数（wrapGet调用次数） | 次 | application |
 | `hotkey_qps` | 当前QPS（每秒访问次数） | 请求/秒 | application |
-| `hotkey_keys_per_second` | 每秒访问的Key数量 | key/秒 | application |
 
 ### 热Key统计指标
 

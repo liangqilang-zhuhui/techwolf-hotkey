@@ -117,7 +117,7 @@ public class CacheDataUpdater implements ICacheDataUpdater {
                 log.debug("注册数据获取回调函数成功, key: {}", key);
             } else {
                 // key 已存在，使用已注册的回调函数（不覆盖）
-                log.debug("数据获取回调函数已存在，跳过注册, key: {}", key);
+                //log.debug("数据获取回调函数已存在，跳过注册, key: {}", key);
             }
         } catch (Exception e) {
             log.debug("注册数据获取回调函数失败, key: {}", key, e);

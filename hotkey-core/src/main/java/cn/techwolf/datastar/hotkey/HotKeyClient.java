@@ -220,9 +220,6 @@ public class HotKeyClient implements IHotKeyClient {
                 if (hitRateStatistics != null) {
                     hitRateStatistics.recordHotKeyHit();
                 }
-                if (log.isDebugEnabled()) {
-                    log.debug("从本地缓存获取成功, key: {}", key);
-                }
                 return cachedValue;
             } else {
                 // 记录热Key缓存未命中
