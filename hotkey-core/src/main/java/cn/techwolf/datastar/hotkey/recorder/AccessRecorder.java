@@ -486,6 +486,7 @@ public class AccessRecorder implements IAccessRecorder {
         private volatile long windowStartTime;
         private volatile long lastAccessTime;
         private volatile double qps;
+        private volatile double previousWindowQps; // 上一个窗口的QPS，用于延迟重置时的衰减计算
         private final long windowSize;
 
         public AccessInfo(String key, long windowSize) {
@@ -496,14 +497,17 @@ public class AccessRecorder implements IAccessRecorder {
             this.windowStartTime = currentTime;
             this.lastAccessTime = currentTime;
             this.qps = 0.0;
+            this.previousWindowQps = 0.0;
         }
 
         public void recordAccess() {
             long currentTime = System.currentTimeMillis();
             long elapsed = currentTime - windowStartTime;
+            long windowSizeMs = windowSize * 1000L;
 
             // 如果超过窗口大小，重置窗口
-            if (elapsed >= windowSize * 1000) {
+            // 注意：recordAccess需要及时重置窗口以开始新的计数，但updateQps会使用延迟重置策略避免抖动
+            if (elapsed >= windowSizeMs) {
                 resetWindow(currentTime);
             }
 
@@ -512,6 +516,8 @@ public class AccessRecorder implements IAccessRecorder {
         }
 
         private void resetWindow(long currentTime) {
+            // 保存当前QPS作为上一个窗口的QPS，用于延迟重置时的衰减计算
+            previousWindowQps = qps;
             windowStartTime = currentTime;
             accessCount.reset();
             qps = 0.0;
@@ -520,26 +526,45 @@ public class AccessRecorder implements IAccessRecorder {
         public void updateQps() {
             long currentTime = System.currentTimeMillis();
             long elapsed = currentTime - windowStartTime;
+            long windowSizeMs = windowSize * 1000L;
 
-            // 如果窗口过期，重置窗口并将QPS设为0
-            // 这样可以确保停止访问后，QPS会正确降为0，从而触发降级
-            if (elapsed >= windowSize * 1000) {
+            // 窗口未过期，正常计算QPS
+            if (elapsed < windowSizeMs) {
+                if (elapsed > 0) {
+                    long count = accessCount.sum();
+                    // 平滑QPS计算，避免窗口刚重置后短时间内大量访问导致的QPS虚高问题
+                    // 例如：
+                    // - 窗口10秒，刚过1秒访问100次：QPS = 100/10 = 10（平滑后的QPS，避免虚高）
+                    // - 窗口10秒，已过10秒访问100次：QPS = 100/10 = 10（平均QPS）
+                    // 这种方式虽然会在窗口未满时略微低估QPS，但可以避免突发访问导致的误判
+                    qps = count / (double) windowSize;
+                } else {
+                    qps = 0.0;
+                }
+                return;
+            }
+
+            // 窗口已过期，使用延迟重置策略避免QPS突然变为0导致的抖动
+            // 策略：窗口过期后，在0.5倍窗口时间内使用衰减策略，超过1.5倍窗口时间才真正重置
+            long expiredTime = elapsed - windowSizeMs;
+            long delayResetThreshold = (long) (windowSizeMs * 0.5); // 延迟重置阈值：窗口大小的50%
+            
+            // 如果超过1.5倍窗口时间，才真正重置窗口
+            if (expiredTime >= delayResetThreshold) {
                 resetWindow(currentTime);
                 qps = 0.0;
                 return;
             }
-
-            if (elapsed > 0) {
-                long count = accessCount.sum();
-                // 平滑QPS计算，避免窗口刚重置后短时间内大量访问导致的QPS虚高问题
-                // 例如：
-                // - 窗口10秒，刚过1秒访问100次：QPS = 100/10 = 10（平滑后的QPS，避免虚高）
-                // - 窗口10秒，已过10秒访问100次：QPS = 100/10 = 10（平均QPS）
-                // 这种方式虽然会在窗口未满时略微低估QPS，但可以避免突发访问导致的误判
-                qps = count / (double) windowSize;
-            } else {
-                qps = 0.0;
-            }
+            
+            // 窗口刚过期（0到0.5倍窗口时间内），使用衰减策略
+            // 使用保存的上一个窗口的QPS，逐渐衰减，避免突然降级
+            // 注意：recordAccess可能已经重置了窗口，所以accessCount是新窗口的计数
+            // 我们使用previousWindowQps（在resetWindow时保存）进行衰减计算
+            
+            // 衰减因子：过期时间越长，衰减越多
+            // expiredTime在0到delayResetThreshold之间，衰减因子从1.0降到0.0
+            double decayFactor = 1.0 - (expiredTime / (double) delayResetThreshold);
+            qps = previousWindowQps * Math.max(0.0, decayFactor);
         }
 
         public String getKey() {
