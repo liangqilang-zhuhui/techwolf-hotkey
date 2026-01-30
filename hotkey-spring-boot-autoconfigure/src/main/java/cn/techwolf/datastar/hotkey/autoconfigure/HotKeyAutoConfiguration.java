@@ -69,19 +69,10 @@ public class HotKeyAutoConfiguration {
      */
     private HotKeyConfig.Detection convertDetectionConfig(HotKeyProperties.Detection props) {
         HotKeyConfig.Detection detection = new HotKeyConfig.Detection();
-        detection.setWindowSize(props.getWindowSize());
         detection.setTopN(props.getTopN());
         detection.setHotKeyQpsThreshold(props.getHotKeyQpsThreshold());
         detection.setWarmKeyQpsThreshold(props.getWarmKeyQpsThreshold());
         detection.setPromotionInterval(props.getPromotionInterval());
-        detection.setDemotionInterval(props.getDemotionInterval());
-        detection.setMaxStatsCapacity(props.getMaxStatsCapacity());
-        detection.setAdmissionMinFrequency(props.getAdmissionMinFrequency());
-        detection.setSamplingRate(props.getSamplingRate());
-        detection.setFastAdmissionThreshold(props.getFastAdmissionThreshold());
-        detection.setRejectedAccessThreshold(props.getRejectedAccessThreshold());
-        detection.setEnableConsistentSampling(props.isEnableConsistentSampling());
-        detection.setCapacityUsageThreshold(props.getCapacityUsageThreshold());
         return detection;
     }
 
@@ -93,10 +84,8 @@ public class HotKeyAutoConfiguration {
      */
     private HotKeyConfig.Storage convertStorageConfig(HotKeyProperties.Storage props) {
         HotKeyConfig.Storage storage = new HotKeyConfig.Storage();
-        storage.setEnabled(props.isEnabled());
         storage.setMaximumSize(props.getMaximumSize());
         storage.setExpireAfterWrite(props.getExpireAfterWrite());
-        storage.setRecordStats(props.isRecordStats());
         return storage;
     }
 
@@ -134,9 +123,7 @@ public class HotKeyAutoConfiguration {
      */
     private HotKeyConfig.Refresh convertRefreshConfig(HotKeyProperties.Refresh props) {
         HotKeyConfig.Refresh refresh = new HotKeyConfig.Refresh();
-        refresh.setEnabled(props.isEnabled());
         refresh.setInterval(props.getInterval());
-        refresh.setMaxFailureCount(props.getMaxFailureCount());
         return refresh;
     }
 

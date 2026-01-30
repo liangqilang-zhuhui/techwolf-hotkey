@@ -3,8 +3,6 @@ package cn.techwolf.datastar.hotkey.factory;
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.selector.HotKeySelector;
 import cn.techwolf.datastar.hotkey.selector.IHotKeySelector;
-import cn.techwolf.datastar.hotkey.updater.CacheDataUpdater;
-import cn.techwolf.datastar.hotkey.updater.ICacheDataUpdater;
 import cn.techwolf.datastar.hotkey.core.HotKeyManager;
 import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.AccessRecorder;
@@ -38,21 +36,25 @@ public class DefaultComponentFactory implements IComponentFactory {
     }
 
     @Override
-    public ICacheDataUpdater createCacheDataUpdater(IHotKeyStorage hotKeyStorage, HotKeyConfig config) {
-        return new CacheDataUpdater(hotKeyStorage, config);
-    }
-
-    @Override
     public IHotKeyManager createHotKeyManager(IAccessRecorder accessRecorder,
-                                              IHotKeyStorage hotKeyStorage,
-                                              ICacheDataUpdater cacheDataUpdater) {
-        return new HotKeyManager(accessRecorder, hotKeyStorage, cacheDataUpdater);
+                                              IHotKeyStorage hotKeyStorage) {
+        return new HotKeyManager(accessRecorder, hotKeyStorage);
     }
 
-    @Override
+
+    /**
+     * 创建调度器（支持传入缓存数据更新器，用于线程合并优化）
+     *
+     * @param config 配置参数
+     * @param hotKeyManager 热Key管理器
+     * @param hotKeySelector 热Key选择器
+     * @param accessRecorder 访问记录器
+     * @return 调度器实例
+     */
     public IScheduler createScheduler(HotKeyConfig config,
                                       IHotKeyManager hotKeyManager,
-                                      IHotKeySelector hotKeySelector,IAccessRecorder accessRecorder) {
-        return new SchedulerManager(config, hotKeyManager, hotKeySelector,accessRecorder);
+                                      IHotKeySelector hotKeySelector,
+                                      IAccessRecorder accessRecorder) {
+        return new SchedulerManager(config, hotKeyManager, hotKeySelector, accessRecorder);
     }
 }

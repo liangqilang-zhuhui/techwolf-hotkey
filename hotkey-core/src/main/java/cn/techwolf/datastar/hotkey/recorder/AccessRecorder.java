@@ -237,7 +237,6 @@ public class AccessRecorder implements IAccessRecorder {
                 expiredKeys.add(entry.getKey());
             }
         }
-        
         // 移除过期的key
         int removedCount = 0;
         for (String key : expiredKeys) {
@@ -245,7 +244,6 @@ public class AccessRecorder implements IAccessRecorder {
                 removedCount++;
             }
         }
-        
         return removedCount;
     }
 
@@ -395,7 +393,12 @@ public class AccessRecorder implements IAccessRecorder {
 
             if (elapsed > 0) {
                 long count = accessCount.sum();
-                qps = (count * 1000.0) / elapsed; // 次/秒
+                // 平滑QPS计算，避免窗口刚重置后短时间内大量访问导致的QPS虚高问题
+                // 例如：
+                // - 窗口10秒，刚过1秒访问100次：QPS = 100/10 = 10（平滑后的QPS，避免虚高）
+                // - 窗口10秒，已过10秒访问100次：QPS = 100/10 = 10（平均QPS）
+                // 这种方式虽然会在窗口未满时略微低估QPS，但可以避免突发访问导致的误判
+                qps = count / (double) windowSize;
             } else {
                 qps = 0.0;
             }

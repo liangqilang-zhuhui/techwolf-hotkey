@@ -43,7 +43,11 @@ public class SchedulerManager implements IScheduler {
      */
     private final IExceptionHandler exceptionHandler;
 
+    /**
+     * 访问记录器
+     */
     private final IAccessRecorder accessRecorder;
+
     /**
      * 定时任务执行器
      */
@@ -55,7 +59,17 @@ public class SchedulerManager implements IScheduler {
     private volatile boolean running = false;
 
     /**
-     * 构造函数
+     * 晋升任务执行计数器，用于控制降级任务执行频率
+     */
+    private volatile int promotionCount = 0;
+
+    /**
+     * 降级任务执行频率：每执行N次晋升任务，执行1次降级任务
+     */
+    private static final int DEMOTION_TASK_FREQUENCY = 20;
+
+    /**
+     * 构造函数（支持自定义异常处理器和缓存数据更新器）
      *
      * @param config 配置参数
      * @param hotKeyManager 热Key管理器
@@ -66,28 +80,11 @@ public class SchedulerManager implements IScheduler {
                            IHotKeyManager hotKeyManager,
                            IHotKeySelector hotKeySelector,
                            IAccessRecorder accessRecorder) {
-        this(config, hotKeyManager, hotKeySelector, accessRecorder, null);
-    }
-
-    /**
-     * 构造函数（支持自定义异常处理器）
-     *
-     * @param config 配置参数
-     * @param hotKeyManager 热Key管理器
-     * @param hotKeySelector 热Key选择器
-     * @param accessRecorder 访问记录器
-     * @param exceptionHandler 异常处理器（可选，为null时使用默认处理器）
-     */
-    public SchedulerManager(HotKeyConfig config,
-                           IHotKeyManager hotKeyManager,
-                           IHotKeySelector hotKeySelector,
-                           IAccessRecorder accessRecorder,
-                           IExceptionHandler exceptionHandler) {
         this.config = config;
         this.hotKeyManager = hotKeyManager;
         this.hotKeySelector = hotKeySelector;
         this.accessRecorder = accessRecorder;
-        this.exceptionHandler = exceptionHandler != null ? exceptionHandler : new DefaultExceptionHandler();
+        this.exceptionHandler =  new DefaultExceptionHandler();
     }
 
     @Override
@@ -97,33 +94,38 @@ public class SchedulerManager implements IScheduler {
             return;
         }
 
-        scheduler = Executors.newScheduledThreadPool(2, r -> {
+        //晋升任务、降级任务、刷新任务
+        scheduler = Executors.newScheduledThreadPool(3, r -> {
             Thread t = new Thread(r, "HotKey-Scheduler");
             t.setDaemon(true);
             return t;
         });
 
-        // 启动热Key晋升任务
-        schedulePromotionTask();
-        
-        // 启动热Key降级和清理任务
-        scheduleDemotionTask();
+        // 启动热Key晋升任务（降级任务将在晋升任务中按频率执行）
+        scheduleTask();
 
         running = true;
         long promotionInterval = config.getDetection().getPromotionInterval();
-        long demotionInterval = config.getDetection().getDemotionInterval();
-        log.info("定时任务管理器已启动，晋升间隔: {}ms, 降级间隔: {}ms", promotionInterval, demotionInterval);
+        long refreshInterval = config.getRefresh() != null ? config.getRefresh().getInterval() : 10000L;
+        log.info("定时任务管理器已启动，晋升间隔: {}ms, 降级任务频率: 每{}次晋升执行1次, 刷新间隔: {}ms", 
+                promotionInterval, DEMOTION_TASK_FREQUENCY, refreshInterval);
     }
 
     /**
      * 启动热Key晋升任务
      */
-    private void schedulePromotionTask() {
+    private void scheduleTask() {
         long promotionInterval = config.getDetection().getPromotionInterval();
         scheduler.scheduleWithFixedDelay(
                 () -> {
                     try {
                         executePromotionTask();
+                        //每执行20次晋升任务，执行1次降级任务
+                        promotionCount++;
+                        if (promotionCount >= DEMOTION_TASK_FREQUENCY) {
+                            promotionCount = 0;
+                            executeDemotionTask();
+                        }
                     } catch (Exception e) {
                         exceptionHandler.handleException("热Key晋升任务", e);
                     }
@@ -146,25 +148,6 @@ public class SchedulerManager implements IScheduler {
         if (newHotKeys != null && !newHotKeys.isEmpty()) {
             hotKeyManager.promoteHotKeys(newHotKeys);
         }
-    }
-
-    /**
-     * 启动热Key降级和清理任务
-     */
-    private void scheduleDemotionTask() {
-        long demotionInterval = config.getDetection().getDemotionInterval();
-        scheduler.scheduleWithFixedDelay(
-                () -> {
-                    try {
-                        executeDemotionTask();
-                    } catch (Exception e) {
-                        exceptionHandler.handleException("热Key降级和淘汰任务", e);
-                    }
-                },
-                demotionInterval,
-                demotionInterval,
-                TimeUnit.MILLISECONDS
-        );
     }
 
     /**
@@ -200,7 +183,6 @@ public class SchedulerManager implements IScheduler {
                 Thread.currentThread().interrupt();
             }
         }
-
         running = false;
         log.info("定时任务管理器已停止");
     }

@@ -155,17 +155,6 @@ public class HotKeyMonitorMBean implements HotKeyMonitorMXBean {
     }
 
     @Override
-    public int getUpdaterSize() {
-        try {
-            MonitorInfo info = monitor.getMonitorInfo();
-            return info != null ? info.getUpdaterSize() : 0;
-        } catch (Exception e) {
-            log.error("获取缓存数据更新器注册表数据量失败", e);
-            return 0;
-        }
-    }
-
-    @Override
     public long getTotalWrapGetCount() {
         try {
             MonitorInfo info = monitor.getMonitorInfo();

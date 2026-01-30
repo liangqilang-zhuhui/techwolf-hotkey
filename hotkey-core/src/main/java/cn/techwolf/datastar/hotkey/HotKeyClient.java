@@ -6,7 +6,6 @@ import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.factory.DefaultComponentFactory;
 import cn.techwolf.datastar.hotkey.factory.IComponentFactory;
 import cn.techwolf.datastar.hotkey.selector.IHotKeySelector;
-import cn.techwolf.datastar.hotkey.updater.ICacheDataUpdater;
 import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
 import cn.techwolf.datastar.hotkey.scheduler.IScheduler;
@@ -15,6 +14,7 @@ import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitor;
 import cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor;
 import cn.techwolf.datastar.hotkey.monitor.HitRateStatistics;
 import cn.techwolf.datastar.hotkey.monitor.IHitRateStatistics;
+import cn.techwolf.datastar.hotkey.storage.HotKeyStorage;
 
 import java.util.function.Function;
 
@@ -47,11 +47,6 @@ public class HotKeyClient implements IHotKeyClient {
      * 数据存储
      */
     private final IHotKeyStorage hotKeyStorage;
-
-    /**
-     * 缓存数据更新器
-     */
-    private final ICacheDataUpdater cacheDataUpdater;
 
     /**
      * 定时任务调度器
@@ -104,7 +99,6 @@ public class HotKeyClient implements IHotKeyClient {
             this.accessRecorder = null;
             this.hotKeySelector = null;
             this.hotKeyStorage = null;
-            this.cacheDataUpdater = null;
             this.scheduler = null;
             this.hotKeyMonitor = null;
             this.hitRateStatistics = null;
@@ -124,22 +118,17 @@ public class HotKeyClient implements IHotKeyClient {
         // 3. 初始化热Key选择器（模块四）
         this.hotKeySelector = factory.createHotKeySelector(accessRecorder, config);
 
-        // 4. 初始化缓存数据更新器（模块六，包含自动刷新功能）
-        // 注意：需要在创建 HotKeyManager 之前创建，因为 Manager 需要依赖它
-        this.cacheDataUpdater = factory.createCacheDataUpdater(hotKeyStorage, config);
-
         // 5. 初始化热Key管理器（模块一）
-        // 注意：Manager 依赖 cacheDataUpdater 用于清理被降级key
-        this.hotKeyManager = factory.createHotKeyManager(accessRecorder, hotKeyStorage, cacheDataUpdater);
+        this.hotKeyManager = factory.createHotKeyManager(accessRecorder, hotKeyStorage);
 
-        // 6. 初始化定时任务调度器
+        // 6. 初始化定时任务调度器（线程合并优化：将刷新任务合并到调度器中）
         this.scheduler = factory.createScheduler(config, hotKeyManager, hotKeySelector, accessRecorder);
 
         // 7. 初始化命中率统计器
         this.hitRateStatistics = new HitRateStatistics();
 
         // 8. 初始化热Key监控器（传入统计器）
-        this.hotKeyMonitor = new HotKeyMonitor(hotKeyManager, hotKeyStorage, accessRecorder, cacheDataUpdater, config, hitRateStatistics);
+        this.hotKeyMonitor = new HotKeyMonitor(hotKeyManager, hotKeyStorage, accessRecorder, config, hitRateStatistics);
 
         // 9. 启动定时任务和刷新服务
         startServices();
@@ -150,39 +139,29 @@ public class HotKeyClient implements IHotKeyClient {
 
     /**
      * 启动所有服务
-     * 包括定时任务调度器和缓存数据更新器的自动刷新服务
+     * 包括定时任务调度器（已合并刷新任务，不再单独启动刷新服务）
      */
     private void startServices() {
         if (!enabled) {
             return;
         }
-
-        // 启动定时任务调度器
-        if (scheduler != null) {
-            scheduler.start();
-        }
-
-        // 启动缓存数据更新器的自动刷新服务（如果启用）
-        if (cacheDataUpdater != null) {
-            cacheDataUpdater.start();
-        }
+        // 启动定时任务调度器（已包含晋升、降级、刷新任务）
+        scheduler.start();
     }
 
     /**
      * 关闭客户端
-     * 停止定时任务和缓存数据更新器的刷新服务，释放资源
+     * 停止定时任务（已包含刷新任务），释放资源
      */
     public void shutdown() {
-        // 停止缓存数据更新器的自动刷新服务
-        if (cacheDataUpdater != null) {
-            cacheDataUpdater.stop();
-        }
-
-        // 停止定时任务调度器
+        // 停止定时任务调度器（已包含刷新任务）
         if (scheduler != null) {
             scheduler.stop();
         }
-
+        // 关闭数据存储，释放刷新线程池资源
+        if (hotKeyStorage != null) {
+            hotKeyStorage.shutdown();
+        }
         log.info("热Key客户端已关闭");
     }
 
@@ -193,54 +172,41 @@ public class HotKeyClient implements IHotKeyClient {
         }
 
         // 0. 记录wrapGet调用统计
-        if (hitRateStatistics != null) {
-            hitRateStatistics.recordWrapGet(key);
-        }
+        hitRateStatistics.recordWrapGet(key);
 
         // 1. 记录访问日志（用于热Key检测）
         recordAccess(key);
 
-        // 2. 检查是否为热Key（只检查一次，避免重复检查）
+        // 2. 检查是否为热Key
         boolean isHot = isHotKey(key);
         
         // 3. 如果是热Key，尝试从缓存获取
         if (isHot) {
             // 记录热Key访问
-            if (hitRateStatistics != null) {
-                hitRateStatistics.recordHotKeyAccess();
-            }
-            
-            // 注册数据获取回调函数到缓存数据更新器，用于自动刷新
-            cacheDataUpdater.register(key, redisGetter);
-            
-            // 从缓存获取（不重复检查是否为热Key，因为调用方已检查）
+            hitRateStatistics.recordHotKeyAccess();
+            // 从缓存获取（再次检查是否为热Key，避免在检查后被降级导致的竞态条件）
             String cachedValue = getFromCache(key);
             if (cachedValue != null) {
                 // 记录热Key缓存命中
-                if (hitRateStatistics != null) {
-                    hitRateStatistics.recordHotKeyHit();
-                }
+                hitRateStatistics.recordHotKeyHit();
                 return cachedValue;
             } else {
                 // 记录热Key缓存未命中
-                if (hitRateStatistics != null) {
-                    hitRateStatistics.recordHotKeyMiss();
-                }
+                hitRateStatistics.recordHotKeyMiss();
             }
         }
 
-        // 4. 缓存未命中，从Redis获取值
+        // 4. 缓存未命中或key已被降级，从Redis获取值
         String value = redisGetter != null ? redisGetter.apply(key) : null;
         
         // 5. 如果从Redis获取到值，且是热Key，更新本地缓存
-        if (value != null && isHot) {
-            // 直接更新缓存，不重复检查是否为热Key（调用方已检查）
-            hotKeyStorage.put(key, value);
+        // 再次检查是否为热Key（可能在获取Redis数据期间被降级）
+        if (value != null && isHotKey(key)) {
+            hotKeyStorage.put(key, value, redisGetter);
             if (log.isDebugEnabled()) {
                 log.debug("更新本地缓存完成, key: {}", key);
             }
         }
-        
         return value;
     }
 
@@ -267,36 +233,6 @@ public class HotKeyClient implements IHotKeyClient {
         return hotKeyStorage.get(key);
     }
 
-    @Override
-    public void updateCache(String key, String value) {
-        if (!enabled || key == null || value == null) {
-            return;
-        }
-        // 如果是热Key，则更新缓存（内部方法会检查是否为热Key）
-        if (isHotKey(key)) {
-            hotKeyStorage.put(key, value);
-        }
-    }
-
-    @Override
-    public void removeCache(String key) {
-        if (!enabled || key == null) {
-            return;
-        }
-        // 如果是热Key，则从缓存中删除，同时从注册表中移除，避免后续无意义的刷新尝试
-        if (isHotKey(key)) {
-            // 1. 从缓存中移除
-            hotKeyStorage.remove(key);
-            // 2. 从注册表中移除，避免后续无意义的刷新尝试
-            // 注意：remove方法会同时清理失败计数
-            if (cacheDataUpdater != null) {
-                cacheDataUpdater.remove(key);
-            }
-            if (log.isDebugEnabled()) {
-                log.debug("删除热Key缓存完成, key: {}", key);
-            }
-        }
-    }
 
     /**
      * 判断是否为热Key（内部方法，用于getFromCache和updateCache）

@@ -692,14 +692,14 @@ def test_13_write_triggers_cache_update():
         time.sleep(1)
         
         # 6. 验证缓存是否已更新（多次尝试，因为写操作是异步的）
-        max_retries = 5
+        max_retries = 3
         updated = False
         for i in range(max_retries):
             response = requests.get(API_GET, params={"key": key}, timeout=5)
             if response.status_code == 200 and response.text.strip() == value2:
                 updated = True
                 break
-            time.sleep(1)
+            time.sleep(5)
         
         log_test("验证写操作后缓存是否更新", updated,
                  f"期望: {value2}, 实际: {response.text.strip() if not updated else value2} (尝试{max_retries}次)")

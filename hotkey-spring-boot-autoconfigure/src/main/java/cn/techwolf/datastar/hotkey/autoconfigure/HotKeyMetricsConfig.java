@@ -118,10 +118,7 @@ public class HotKeyMetricsConfig implements ApplicationListener<ApplicationReady
         // 记录器指标
         registerGauge("hotkey.recorder.size", "访问记录器大小", monitor, MonitorInfo::getRecorderSize, tags);
         registerGauge("hotkey.recorder.memory.size", "访问记录器内存大小（字节）", monitor, MonitorInfo::getRecorderMemorySize, tags);
-        
-        // 更新器指标
-        registerGauge("hotkey.updater.size", "更新器大小", monitor, MonitorInfo::getUpdaterSize, tags);
-        
+
         // 访问统计指标
         registerGauge("hotkey.total.access.count", "总访问次数（wrapGet调用次数）", monitor, MonitorInfo::getTotalWrapGetCount, tags);
         registerGauge("hotkey.qps", "当前QPS（每秒访问次数）", monitor, MonitorInfo::getWrapGetQps, tags);

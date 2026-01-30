@@ -34,24 +34,6 @@ public interface IHotKeyClient {
      */
     void recordAccess(String key);
 
-    /**
-     * 更新热Key缓存
-     * 业务逻辑：如果从Redis获取到值，且是热Key，则保存到本地缓存
-     * 使用场景：从Redis获取到值后，如果是热Key，需要更新本地缓存
-     *
-     * @param key Redis key
-     * @param value 从Redis获取的值（可能为null）
-     */
-    void updateCache(String key, String value);
-
-    /**
-     * 删除热Key缓存
-     * 业务逻辑：如果是热Key，则从本地缓存中删除
-     * 使用场景：删除Redis key时，如果是热Key，需要清理本地缓存
-     *
-     * @param key Redis key
-     */
-    void removeCache(String key);
 
     /**
      * 检查是否启用

@@ -15,22 +15,11 @@ spring:
 hotkey:
   enabled: true                          # 是否启用，默认true
   detection:
-    window-size: 5                      # 统计窗口大小（秒），默认60
-    top-n: 10                            # Top N数量，默认10
-    hot-key-qps-threshold: 30.0        # 热Key QPS阈值，默认3000.0
-    warm-key-qps-threshold: 10.0        # 温Key QPS阈值，默认500.0
-    promotion-interval: 5000             # 晋升间隔（毫秒），默认5000
-    demotion-interval: 60000             # 降级间隔（毫秒），默认60000
-  storage:
-    enabled: true                        # 是否启用本地缓存，默认true
-    maximum-size: 100                    # 最大缓存数量，默认100
-    expire-after-write: 60               # 过期时间（秒），默认60
-  recorder:
-    max-capacity: 15                  # 访问记录最大容量，默认10000
-    window-size: 60                      # 统计窗口大小（秒），默认60
+    top-n: 20                            # Top N数量，默认10
+    hot-key-qps-threshold: 20       # 热Key QPS阈值，修复：从10.0提高到1000.0，减少误判
+    warm-key-qps-threshold: 10        # 温Key QPS阈值，默认500.0
+    promotion-interval: 5000            # 晋升间隔（毫秒），修复：从5000增加到10000，减少频繁晋升
   monitor:
-    enabled: true                         # 是否启用监控，默认true
-    interval: 30000                       # 监控输出间隔（毫秒），默认60000
     prometheus:
       enabled: true                       # 启用Prometheus指标（默认启用）
 

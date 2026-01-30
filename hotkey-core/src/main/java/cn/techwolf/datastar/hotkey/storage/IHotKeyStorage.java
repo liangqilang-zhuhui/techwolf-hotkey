@@ -1,5 +1,8 @@
 package cn.techwolf.datastar.hotkey.storage;
 
+import java.util.Set;
+import java.util.function.Function;
+
 /**
  * 热Key数据存储接口（模块二）
  * 职责：只存储热key的value，采用local cache，1分钟过期机制
@@ -19,30 +22,17 @@ public interface IHotKeyStorage {
     /**
      * 保存热Key的值
      *
-     * @param key Redis key
+     * @param key   Redis key
      * @param value 值
      */
-    void put(String key, String value);
+    void put(String key, String value, Function<String, String> dataGetter);
 
     /**
-     * 更新热Key的值
+     * 只保留指定key集合，删除其他所有key
      *
-     * @param key Redis key
-     * @param value 值
+     * @param keysToRetain 需要保留的key集合
      */
-    void update(String key, String value);
-
-    /**
-     * 删除热Key的值
-     *
-     * @param key Redis key
-     */
-    void remove(String key);
-
-    /**
-     * 清空所有数据
-     */
-    void clear();
+    void retainAll(Set<String> keysToRetain);
 
     /**
      * 获取存储大小
@@ -50,4 +40,7 @@ public interface IHotKeyStorage {
      * @return 存储的key数量
      */
     long size();
+
+    void shutdown();
+
 }

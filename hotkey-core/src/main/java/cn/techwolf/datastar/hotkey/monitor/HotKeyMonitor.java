@@ -6,7 +6,6 @@ import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
 import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
-import cn.techwolf.datastar.hotkey.updater.ICacheDataUpdater;
 
 import java.text.DecimalFormat;
 import java.util.Collections;
@@ -42,11 +41,6 @@ public class HotKeyMonitor implements IHotKeyMonitor {
     private final IAccessRecorder accessRecorder;
 
     /**
-     * 缓存数据更新器
-     */
-    private final ICacheDataUpdater cacheDataUpdater;
-
-    /**
      * 配置参数
      */
     private final HotKeyConfig config;
@@ -59,13 +53,11 @@ public class HotKeyMonitor implements IHotKeyMonitor {
     public HotKeyMonitor(IHotKeyManager hotKeyManager,
                         IHotKeyStorage hotKeyStorage,
                         IAccessRecorder accessRecorder,
-                        ICacheDataUpdater cacheDataUpdater,
                         HotKeyConfig config,
                         IHitRateStatistics hitRateStatistics) {
         this.hotKeyManager = hotKeyManager;
         this.hotKeyStorage = hotKeyStorage;
         this.accessRecorder = accessRecorder;
-        this.cacheDataUpdater = cacheDataUpdater;
         this.config = config;
         this.hitRateStatistics = hitRateStatistics;
     }
@@ -88,7 +80,6 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             log.debug("数据存储层大小: {}", info.getStorageSize());
             log.debug("访问记录模块数据量: {}", info.getRecorderSize());
             log.debug("访问记录模块内存大小(估算): {} bytes", info.getRecorderMemorySize());
-            log.debug("缓存数据更新器注册表数据量: {}", info.getUpdaterSize());
             log.debug("wrapGet总调用次数: {}", info.getTotalWrapGetCount());
             log.debug("wrapGet的QPS: {}", formatDouble(info.getWrapGetQps()));
             log.debug("每秒访问的不同key数量: {}", formatDouble(info.getKeysPerSecond()));
@@ -146,14 +137,6 @@ public class HotKeyMonitor implements IHotKeyMonitor {
         } else {
             info.setRecorderSize(0);
             info.setRecorderMemorySize(0L);
-        }
-
-        // 获取缓存数据更新器注册表的数据量
-        if (cacheDataUpdater != null) {
-            int updaterSize = cacheDataUpdater.size();
-            info.setUpdaterSize(updaterSize);
-        } else {
-            info.setUpdaterSize(0);
         }
 
         // 获取命中率统计数据

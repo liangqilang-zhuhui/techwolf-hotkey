@@ -57,7 +57,6 @@ public class HotKeyMonitorController {
             result.put("storageSize", monitorInfo.getStorageSize());
             result.put("recorderSize", monitorInfo.getRecorderSize());
             result.put("recorderMemorySize", monitorInfo.getRecorderMemorySize());
-            result.put("updaterSize", monitorInfo.getUpdaterSize());
             result.put("totalWrapGetCount", monitorInfo.getTotalWrapGetCount());
             result.put("wrapGetQps", monitorInfo.getWrapGetQps());
             result.put("keysPerSecond", monitorInfo.getKeysPerSecond());

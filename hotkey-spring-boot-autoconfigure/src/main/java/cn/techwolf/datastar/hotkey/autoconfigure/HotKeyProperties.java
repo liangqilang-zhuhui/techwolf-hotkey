@@ -54,19 +54,10 @@ public class HotKeyProperties {
      */
     @Data
     public static class Detection {
-        private int windowSize = HotKeyConfigDefaults.Detection.WINDOW_SIZE;
         private int topN = HotKeyConfigDefaults.Detection.TOP_N;
         private double hotKeyQpsThreshold = HotKeyConfigDefaults.Detection.HOT_KEY_QPS_THRESHOLD;
         private double warmKeyQpsThreshold = HotKeyConfigDefaults.Detection.WARM_KEY_QPS_THRESHOLD;
         private long promotionInterval = HotKeyConfigDefaults.Detection.PROMOTION_INTERVAL;
-        private long demotionInterval = HotKeyConfigDefaults.Detection.DEMOTION_INTERVAL;
-        private int maxStatsCapacity = HotKeyConfigDefaults.Detection.MAX_STATS_CAPACITY;
-        private double admissionMinFrequency = HotKeyConfigDefaults.Detection.ADMISSION_MIN_FREQUENCY;
-        private double samplingRate = HotKeyConfigDefaults.Detection.SAMPLING_RATE;
-        private double fastAdmissionThreshold = HotKeyConfigDefaults.Detection.FAST_ADMISSION_THRESHOLD;
-        private int rejectedAccessThreshold = HotKeyConfigDefaults.Detection.REJECTED_ACCESS_THRESHOLD;
-        private boolean enableConsistentSampling = HotKeyConfigDefaults.Detection.ENABLE_CONSISTENT_SAMPLING;
-        private double capacityUsageThreshold = HotKeyConfigDefaults.Detection.CAPACITY_USAGE_THRESHOLD;
     }
 
     /**
@@ -74,10 +65,8 @@ public class HotKeyProperties {
      */
     @Data
     public static class Storage {
-        private boolean enabled = HotKeyConfigDefaults.Storage.ENABLED;
         private long maximumSize = HotKeyConfigDefaults.Storage.MAXIMUM_SIZE;
         private int expireAfterWrite = HotKeyConfigDefaults.Storage.EXPIRE_AFTER_WRITE;
-        private boolean recordStats = HotKeyConfigDefaults.Storage.RECORD_STATS;
     }
 
     /**
@@ -96,7 +85,6 @@ public class HotKeyProperties {
     @Data
     public static class Monitor {
         private long interval = HotKeyConfigDefaults.Monitor.INTERVAL;
-        private boolean enabled = HotKeyConfigDefaults.Monitor.ENABLED;
     }
 
     /**
@@ -104,9 +92,7 @@ public class HotKeyProperties {
      */
     @Data
     public static class Refresh {
-        private boolean enabled = HotKeyConfigDefaults.Refresh.ENABLED;
         private long interval = HotKeyConfigDefaults.Refresh.INTERVAL;
-        private int maxFailureCount = HotKeyConfigDefaults.Refresh.MAX_FAILURE_COUNT;
     }
 
     /**

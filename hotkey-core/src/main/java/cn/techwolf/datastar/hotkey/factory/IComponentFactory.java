@@ -2,7 +2,6 @@ package cn.techwolf.datastar.hotkey.factory;
 
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.selector.IHotKeySelector;
-import cn.techwolf.datastar.hotkey.updater.ICacheDataUpdater;
 import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
 import cn.techwolf.datastar.hotkey.scheduler.IScheduler;
@@ -42,25 +41,14 @@ public interface IComponentFactory {
     IHotKeySelector createHotKeySelector(IAccessRecorder accessRecorder, HotKeyConfig config);
 
     /**
-     * 创建缓存数据更新器
-     *
-     * @param hotKeyStorage 数据存储
-     * @param config 配置参数
-     * @return 缓存数据更新器
-     */
-    ICacheDataUpdater createCacheDataUpdater(IHotKeyStorage hotKeyStorage, HotKeyConfig config);
-
-    /**
      * 创建热Key管理器
      *
      * @param accessRecorder 访问记录器
      * @param hotKeyStorage 数据存储
-     * @param cacheDataUpdater 缓存数据更新器（用于清理被降级key）
      * @return 热Key管理器
      */
     IHotKeyManager createHotKeyManager(IAccessRecorder accessRecorder,
-                                       IHotKeyStorage hotKeyStorage,
-                                       ICacheDataUpdater cacheDataUpdater);
+                                       IHotKeyStorage hotKeyStorage);
 
     /**
      * 创建定时任务调度器

@@ -121,7 +121,7 @@ public class HotKeySelector implements IHotKeySelector {
                             accessStats.getOrDefault(b, 0.0), 
                             accessStats.getOrDefault(a, 0.0)
                     ))
-                    .limit(10)
+                    .limit(topN)
                     .forEach(key -> log.debug("访问统计: key={}, QPS={}", 
                             key, accessStats.get(key)));
         }
@@ -133,7 +133,7 @@ public class HotKeySelector implements IHotKeySelector {
     private void logCandidates(List<String> candidates, 
                               Map<String, Double> accessStats,
                               Set<String> currentHotKeys) {
-        if (log.isDebugEnabled()) {
+        if (log.isDebugEnabled() && candidates.size() > 0) {
             log.debug("满足条件的候选key数: {}, 候选key列表: {}", 
                     candidates.size(), candidates);
             candidates.forEach(key -> {
@@ -159,12 +159,6 @@ public class HotKeySelector implements IHotKeySelector {
         if (newHotKeys.size() > 0) {
             log.debug("晋升热Key计算完成, 新晋升: {}, 新晋升key列表: {}, 耗时: {}ms",
                     newHotKeys.size(), newHotKeys, cost);
-        } else if (candidates.size() > 0) {
-            log.debug("所有候选key都已经是热Key，无需晋升, 候选key数: {}, 耗时: {}ms", 
-                    candidates.size(), cost);
-        } else {
-            log.debug("没有满足条件的候选key, 满足阈值key数: {}, 耗时: {}ms", 
-                    allHotKeysByQps.size(), cost);
         }
     }
 

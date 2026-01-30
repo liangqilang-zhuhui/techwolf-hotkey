@@ -141,14 +141,6 @@ public class MonitorInfo implements Serializable {
         this.recorderMemorySize = recorderMemorySize;
     }
 
-    public int getUpdaterSize() {
-        return updaterSize;
-    }
-
-    public void setUpdaterSize(int updaterSize) {
-        this.updaterSize = updaterSize;
-    }
-
     public long getTotalWrapGetCount() {
         return totalWrapGetCount;
     }

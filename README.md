@@ -6,7 +6,7 @@
 
 ## 功能特性
 
-- ✅ **自动热Key检测**：基于滑动窗口算法，自动检测访问频率高的Redis key（QPS >= 3000）
+- ✅ **自动热Key检测**：基于滑动窗口算法，自动检测访问频率高的Redis key（QPS >= 1000，默认阈值）
 - ✅ **本地缓存**：使用Caffeine实现高性能本地缓存，默认60秒过期
 - ✅ **自动刷新**：定时刷新热Key数据，保证数据新鲜度（默认10秒刷新一次）
 - ✅ **自动淘汰**：支持时间过期、容量限制等多种淘汰策略，自动移除不再热门的key
@@ -36,37 +36,24 @@
 
 ```yaml
 hotkey:
-  enabled: true                          # 是否启用热Key检测
+  enabled: true                          # 是否启用热Key检测，默认true
   detection:
-    window-size: 10                       # 统计窗口大小（秒），默认10秒
-    top-n: 10                             # Top N数量，每5秒晋升Top N个热Key
-    hot-key-qps-threshold: 3000.0          # 热Key QPS阈值（次/秒），QPS >= 3000才能成为热Key
-    warm-key-qps-threshold: 500.0         # 温Key QPS阈值（次/秒），冷key需要QPS >= 500才能升级到温key
-    promotion-interval: 5000               # 晋升间隔（毫秒），每5秒探测一次访问记录
-    demotion-interval: 60000              # 降级间隔（毫秒），每分钟探测一次访问记录
-    max-stats-capacity: 5000               # 统计信息最大容量，建议设置为topN的100-500倍
-    admission-min-frequency: 10.0         # 准入最小访问频率阈值（次/秒），低于此频率的key使用采样机制
-    sampling-rate: 0.1                    # 采样率（0.0-1.0），低频率key按此比例采样记录，默认10%
-    fast-admission-threshold: 50.0        # 快速准入阈值（次/秒），超过此频率的key直接准入
-    rejected-access-threshold: 10000       # 被拒绝访问强制准入阈值，被拒绝10000次后强制准入
-    enable-consistent-sampling: true      # 是否启用一致性采样，使用key的hash值进行采样
-    capacity-usage-threshold: 0.5          # 容量使用率阈值（0.0-1.0），低于此阈值时提高采样率
+    top-n: 20                             # Top N数量，默认20
+    hot-key-qps-threshold: 1000.0          # 热Key QPS阈值（次/秒），默认1000.0
+    warm-key-qps-threshold: 500.0         # 温Key QPS阈值（次/秒），默认500.0
+    promotion-interval: 5000               # 晋升间隔（毫秒），默认5000（5秒）
   storage:
-    enabled: true                         # 是否启用本地缓存
     maximum-size: 200                      # 最大缓存数量，默认200
     expire-after-write: 60                # 写入后过期时间（秒），默认60秒
-    record-stats: true                     # 是否记录统计信息
   recorder:
     max-capacity: 100000                   # 访问记录最大容量，默认100000
     window-size: 10                       # 统计窗口大小（秒），用于计算QPS，默认10秒
-    inactive-expire-time: 300              # 非活跃key过期时间（秒），默认300秒
+    inactive-expire-time: 120              # 非活跃key过期时间（秒），默认120秒
   refresh:
-    enabled: true                          # 是否启用自动刷新，默认true
-    interval: 10000                        # 刷新间隔（毫秒），默认10秒刷新一次
-    max-failure-count: 3                  # 刷新失败重试次数，连续失败超过此次数后移除该热key
+    interval: 10000                        # 刷新间隔（毫秒），默认10000（10秒）
   monitor:
     enabled: true                          # 是否启用监控，默认true
-    interval: 60000                        # 监控输出间隔（毫秒），默认60秒
+    interval: 60000                        # 监控输出间隔（毫秒），默认60000（60秒）
 ```
 
 ### 3. 使用方式
@@ -99,8 +86,8 @@ public String get(String key) {
 // 创建配置
 HotKeyConfig config = new HotKeyConfig();
 config.setEnabled(true);
-config.getDetection().setHotKeyQpsThreshold(3000.0);
-config.getDetection().setTopN(10);
+config.getDetection().setHotKeyQpsThreshold(1000.0);
+config.getDetection().setTopN(20);
 // ... 其他配置
 
 // 创建客户端
@@ -119,19 +106,10 @@ client.shutdown();
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| window-size | int | 10 | 统计窗口大小（秒），用于计算QPS |
-| top-n | int | 10 | Top N数量，每5秒晋升Top N个热Key |
-| hot-key-qps-threshold | double | 3000.0 | 热Key QPS阈值（次/秒），只有QPS >= 3000的key才能成为热Key |
+| top-n | int | 20 | Top N数量，默认20 |
+| hot-key-qps-threshold | double | 1000.0 | 热Key QPS阈值（次/秒），只有QPS >= 1000的key才能成为热Key |
 | warm-key-qps-threshold | double | 500.0 | 温Key QPS阈值（次/秒），冷key需要QPS >= 500才能升级到温key |
-| promotion-interval | long | 5000 | 晋升间隔（毫秒），每5秒探测一次访问记录 |
-| demotion-interval | long | 60000 | 降级间隔（毫秒），每分钟探测一次访问记录 |
-| max-stats-capacity | int | 5000 | 统计信息最大容量，建议设置为topN的100-500倍 |
-| admission-min-frequency | double | 10.0 | 准入最小访问频率阈值（次/秒），低于此频率的key使用采样机制 |
-| sampling-rate | double | 0.1 | 采样率（0.0-1.0），低频率key按此比例采样记录，默认10% |
-| fast-admission-threshold | double | 50.0 | 快速准入阈值（次/秒），超过此频率的key直接准入，不进行采样 |
-| rejected-access-threshold | int | 10000 | 被拒绝访问强制准入阈值，被拒绝10000次后强制准入 |
-| enable-consistent-sampling | boolean | true | 是否启用一致性采样，使用key的hash值进行采样 |
-| capacity-usage-threshold | double | 0.5 | 容量使用率阈值（0.0-1.0），低于此阈值时提高采样率 |
+| promotion-interval | long | 5000 | 晋升间隔（毫秒），默认5000（5秒） |
 
 ### 存储配置（storage）
 
@@ -148,15 +126,13 @@ client.shutdown();
 |------|------|--------|------|
 | max-capacity | int | 100000 | 访问记录最大容量，超限时自动清理低QPS的key |
 | window-size | int | 10 | 统计窗口大小（秒），用于计算QPS |
-| inactive-expire-time | int | 300 | 非活跃key过期时间（秒），超过此时间未访问的key会被清理 |
+| inactive-expire-time | int | 120 | 非活跃key过期时间（秒），超过此时间未访问的key会被清理 |
 
 ### 刷新配置（refresh）
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| enabled | boolean | true | 是否启用自动刷新 |
 | interval | long | 10000 | 刷新间隔（毫秒），默认10秒刷新一次热Key数据 |
-| max-failure-count | int | 3 | 刷新失败重试次数，连续失败超过此次数后移除该热key |
 
 ### 监控配置（monitor）
 
@@ -461,7 +437,7 @@ public class RankingService {
 hotkey:
   detection:
     hot-key-qps-threshold: 5000.0    # 提高阈值，只缓存最热门的商品
-    top-n: 20                         # 增加Top N数量，支持更多热门商品
+    top-n: 30                         # 增加Top N数量，支持更多热门商品
   storage:
     maximum-size: 500                 # 增加缓存容量
     expire-after-write: 30           # 缩短过期时间，保证数据新鲜度
@@ -473,20 +449,20 @@ hotkey:
 ```yaml
 hotkey:
   detection:
-    hot-key-qps-threshold: 3000.0    # 默认阈值即可
+    hot-key-qps-threshold: 1000.0    # 使用默认阈值
     top-n: 50                         # 增加Top N数量
   storage:
     maximum-size: 1000                # 增加缓存容量
-    expire-after-write: 60           # 默认过期时间
+    expire-after-write: 60           # 使用默认过期时间
   refresh:
-    interval: 10000                   # 默认刷新间隔
+    interval: 10000                   # 使用默认刷新间隔
 ```
 
 **用户信息查询场景**：
 ```yaml
 hotkey:
   detection:
-    hot-key-qps-threshold: 2000.0    # 降低阈值，缓存更多用户
+    hot-key-qps-threshold: 500.0     # 降低阈值，缓存更多用户
     top-n: 100                        # 增加Top N数量
   storage:
     maximum-size: 2000                # 增加缓存容量
@@ -501,8 +477,8 @@ hotkey:
 
 1. **访问统计**：每次调用 `wrapGet` 方法时，异步记录访问统计（使用滑动窗口算法计算QPS）
 2. **热Key检测**：
-   - 每5秒执行一次热Key晋升：从满足QPS阈值（>= 3000）的key中，按QPS降序排序，取Top N个晋升为热Key
-   - 每60秒执行一次热Key降级：移除QPS低于阈值（< 3000）的key
+   - 每5秒执行一次热Key晋升：从满足QPS阈值（>= 1000）的key中，按QPS降序排序，取Top N个（默认20个）晋升为热Key
+   - 每60秒执行一次热Key降级：移除QPS低于阈值（< 1000）的key
 3. **本地缓存**：
    - 当key被识别为热Key后，自动缓存到本地Caffeine缓存
    - 缓存命中时直接返回，无需访问Redis

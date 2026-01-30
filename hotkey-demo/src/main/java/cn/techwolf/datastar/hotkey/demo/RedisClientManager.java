@@ -184,16 +184,7 @@ public class RedisClientManager {
      */
     public void set(String key, String value) {
         try {
-            // 1. 先写入Redis（同步，保证数据一致性）
             valueOps.set(key, value);
-            
-            // 2. 判断热Key功能是否启用，如果是热Key，异步更新本地缓存
-            if (hotKeyClient != null && hotKeyClient.isEnabled()) {
-                // 异步更新缓存（如果是热Key）
-                hotKeyClient.updateCache(key, value);
-                // 异步记录访问统计
-                hotKeyClient.recordAccess(key);
-            }
         } catch (Throwable e) {
             redisExceptionMonitor(e, "set");
             throw new RedisClientRuntimeException(e);
@@ -393,16 +384,7 @@ public class RedisClientManager {
     public boolean del(String key) {
         try {
             // 1. 先删除Redis中的key（同步，保证数据一致性）
-            boolean deleted = redisTemplate.delete(key);
-            
-            // 2. 判断热Key功能是否启用，如果是热Key，异步从缓存中删除
-            if (hotKeyClient != null && hotKeyClient.isEnabled() && deleted) {
-                // 异步从缓存中删除（如果是热Key）
-                hotKeyClient.removeCache(key);
-                LOGGER.debug("删除热Key缓存: key={}", key);
-            }
-            
-            return deleted;
+            return redisTemplate.delete(key);
         } catch (Throwable e) {
             redisExceptionMonitor(e, "del");
             throw new RedisClientRuntimeException(e);

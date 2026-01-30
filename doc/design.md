@@ -64,7 +64,7 @@ HotKeyClient (协调者)
     │   └── HotKeyManager
     │       ├── IAccessRecorder
     │       ├── IHotKeyStorage
-    │       └── ICacheDataUpdater (用于清理被降级key)
+    │       └── ICacheDataUpdater (用于清理被降级key和数据完整性检查)
     │       └── (维护 hotKeys 列表)
     ├── IAccessRecorder
     │   └── AccessRecorder
@@ -72,9 +72,11 @@ HotKeyClient (协调者)
     │   └── HotKeySelector
     │       └── IAccessRecorder
     ├── IScheduler
-    │   └── SchedulerManager
+    │   └── SchedulerManager (统一调度器，线程合并优化)
     │       ├── IHotKeyManager
-    │       └── IHotKeySelector
+    │       ├── IHotKeySelector
+    │       ├── IAccessRecorder
+    │       └── ICacheDataUpdater (用于合并刷新任务)
     ├── IHotKeyStorage
     │   └── HotKeyStorage
     ├── ICacheDataUpdater
@@ -153,14 +155,14 @@ HotKeyClient (协调者)
 
 **完整流程**：
 
-1. 定时任务启动（每5秒执行一次，可配置）
+1. 定时任务启动（每10秒执行一次，可配置）
 2. SchedulerManager从HotKeyManager获取当前热Key列表
 3. SchedulerManager调用HotKeySelector.promoteHotKeys(currentHotKeys)
 4. HotKeySelector计算应该晋升的key：
    - 从AccessRecorder获取所有访问统计
-   - 过滤：QPS >= 热Key阈值（默认3000）
+   - 过滤：QPS >= 热Key阈值（默认1000）
    - 排序：按QPS降序
-   - 取TopN：limit(topN，默认10)
+   - 取TopN：limit(topN，默认20)
    - 排除已经是热Key的，返回新晋升的key集合
 5. SchedulerManager调用HotKeyManager.promoteHotKeys(newHotKeys)
 6. HotKeyManager更新热Key列表（使用synchronized保证原子性，volatile Set保证可见性）
@@ -171,49 +173,60 @@ HotKeyClient (协调者)
 - Selector只负责计算，Manager负责状态管理
 - 使用synchronized保证更新操作的原子性
 - 使用volatile保证可见性
+- **注意**：晋升时只更新热Key列表，数据存储和注册表注册在首次访问时完成（因为需要redisGetter回调函数）
 
 ### 3.5 热Key降级流程
 
 **完整流程**：
 
-1. 定时任务启动（每分钟执行一次，可配置）
+1. 定时任务启动（每30秒执行一次，可配置）
 2. SchedulerManager从HotKeyManager获取当前热Key列表
 3. SchedulerManager调用HotKeySelector.demoteAndEvict(currentHotKeys)
 4. HotKeySelector计算应该降级的key：
    - 从AccessRecorder获取所有访问统计
    - 检查热key中访问小于阈值的，返回应该移除的key集合
    - 如果容量超限，计算需要淘汰的key（但保留热key）
-5. SchedulerManager调用HotKeyManager.demoteHotKeys(removedKeys)
-6. HotKeyManager更新热Key列表（使用synchronized保证原子性，volatile Set保证可见性）
-7. HotKeyManager自动调用CacheDataUpdater清理被降级key的注册表和失败计数
-8. 记录日志
+5. **数据完整性检查**（新增）：
+   - 检查待降级key的数据完整性：
+     - 检查存储层是否有数据（可选，如果从未访问过可能没有数据）
+     - 检查注册表是否有注册（可选，如果从未访问过可能没有注册）
+   - 记录数据完整性状态，用于监控和排查
+6. SchedulerManager调用HotKeyManager.demoteHotKeys(removedKeys)
+7. HotKeyManager更新热Key列表（使用synchronized保证原子性，volatile Set保证可见性）
+8. HotKeyManager自动调用CacheDataUpdater清理被降级key的注册表和失败计数
+9. 记录日志，包括数据完整性信息
 
 **关键点**：
 - Selector只负责计算，Manager负责状态管理
 - Manager负责热Key的完整生命周期管理，包括降级时的资源清理
 - 降级时自动清理注册表，停止自动刷新
 - 清理逻辑内聚在Manager中，简化调用链
+- **数据完整性检查**：降级前检查数据状态，确保清理的完整性
+- **顺序执行**：所有降级相关操作在同一线程中顺序执行，避免竞争条件
 
 ### 3.6 自动刷新流程
 
 **完整流程**：
 
 1. 定时任务启动（每10秒执行一次，可配置）
-2. 从缓存数据更新器获取所有已注册的key
-3. 遍历所有已注册的key
-4. 对于每个key：
+2. **线程合并优化**：刷新任务已合并到SchedulerManager中，统一管理所有定时任务
+3. 从缓存数据更新器获取所有已注册的key
+4. 遍历所有已注册的key
+5. 对于每个key：
    - 从缓存数据更新器获取数据获取回调函数
    - 调用数据获取回调函数.apply(key)获取最新值
    - 如果成功，更新本地缓存，清除失败计数
    - 如果失败，记录失败次数
-5. 检查失败次数超过阈值的key，自动移除（从缓存、注册表、失败计数中移除）
-6. 记录日志
+6. 检查失败次数超过阈值的key，自动移除（从缓存、注册表、失败计数中移除）
+7. 记录日志
 
 **关键点**：
 - 只刷新已注册的key（即热Key）
 - 异常隔离：每个key的刷新使用try-catch隔离，单个key失败不影响其他key
 - 自动清理：刷新失败超过阈值（默认3次）后，自动移除该热key
 - 成功重置：刷新成功时自动清除失败计数
+- **线程合并**：刷新任务与晋升/降级任务在同一线程池中顺序执行，避免线程竞争
+- **顺序执行**：所有定时任务在同一线程池中顺序执行，保证操作的原子性和一致性
 
 ## 4. 模块职责详解
 
@@ -240,6 +253,7 @@ HotKeyClient (协调者)
 - 判断是否热key：基于自己维护的热Key列表进行判断
 - 处理Redis操作：与Redis Client集成，处理get/set/delete操作
 - 管理热Key完整生命周期：降级时自动清理相关资源（注册表、失败计数等）
+- **数据完整性检查**：降级前检查数据状态（存储层、注册表），用于监控和排查
 
 **关键特性**：
 - 异步记录访问日志，不阻塞主流程
@@ -247,6 +261,7 @@ HotKeyClient (协调者)
 - 使用synchronized保证更新操作的原子性
 - 只处理热Key的缓存操作
 - 降级时自动清理资源，保证热Key生命周期的完整性
+- **数据完整性保证**：降级前检查，降级时顺序清理，确保资源完整释放
 
 ### 4.3 HotKeyStorage（模块二：数据存储）
 
@@ -339,19 +354,35 @@ HotKeyClient (协调者)
 
 **职责**：
 - 存储和管理每个Redis key对应的数据获取回调函数
-- 定时刷新热Key数据，保证数据新鲜度
+- 提供刷新执行方法（由SchedulerManager统一调度，线程合并优化）
 - 管理刷新失败计数
 - 自动清理失败的key
 
 **关键特性**：
-- 高内聚：所有数据刷新相关的功能都集中在此模块（存储回调函数 + 定时刷新）
+- 高内聚：所有数据刷新相关的功能都集中在此模块（存储回调函数 + 刷新逻辑）
 - 低耦合：通过接口依赖其他模块
-- 责任清晰：负责缓存数据的更新（存储回调函数和自动刷新）
+- 责任清晰：负责缓存数据的更新（存储回调函数和刷新逻辑）
 - 线程安全：使用ConcurrentHashMap，支持高并发读写
 - 高性能：所有操作都是O(1)时间复杂度
 - 异常隔离：单个key刷新失败不影响其他key
 - 自动清理：刷新失败超过阈值后自动移除
 - 原子操作：使用putIfAbsent替代containsKey + put，保证原子操作
+- **线程合并优化**：刷新任务由SchedulerManager统一调度，不再独立启动线程
+
+### 4.10 SchedulerManager（统一调度器）
+
+**职责**：
+- 统一管理所有定时任务（晋升、降级、刷新）
+- 线程合并优化：所有任务在同一线程池中执行，避免多线程竞争
+- 顺序执行：关键操作顺序执行，保证原子性和一致性
+- 异常处理：统一处理所有定时任务的异常
+
+**关键特性**：
+- **线程合并**：晋升、降级、刷新任务统一管理，减少线程数量
+- **顺序执行**：所有任务在同一线程池中顺序执行，避免竞争条件
+- **职责分明**：每个任务职责清晰，互不干扰
+- **异常隔离**：单个任务失败不影响其他任务
+- **资源管理**：统一管理线程池的启动和停止
 
 ## 5. 配置说明
 
@@ -472,6 +503,52 @@ HotKeyClient (协调者)
 - 定期清理过期key（每5秒），防止内存泄漏
 - 超过限制时拒绝新key，保护系统稳定性
 
+### 6.6 线程管理与数据完整性保证
+
+**线程合并优化**：
+- **统一调度**：所有定时任务（晋升、降级、刷新）统一由SchedulerManager管理
+- **单线程池**：使用同一个ScheduledExecutorService，避免多线程竞争
+- **顺序执行**：关键操作（晋升、降级、刷新）在同一线程中顺序执行，保证原子性
+- **职责分明**：每个任务职责清晰，互不干扰
+
+**数据完整性保证**：
+- **晋升时**：
+  - 更新热Key列表（立即生效）
+  - 数据存储和注册表注册在首次访问时完成（需要redisGetter回调函数）
+- **降级前检查**：
+  - 检查存储层数据状态（可选，用于监控）
+  - 检查注册表注册状态（可选，用于监控）
+  - 记录数据完整性信息，便于排查问题
+- **降级时清理**：
+  - 顺序执行：从热Key列表移除 → 清理存储层数据 → 清理注册表 → 清理失败计数
+  - 使用synchronized保证操作的原子性
+  - 异常隔离：单个key清理失败不影响其他key
+
+**线程架构**：
+```
+SchedulerManager (统一调度器)
+├── HotKey-Scheduler 线程池（3个线程，线程合并优化）
+│   ├── 晋升任务（10秒间隔）
+│   ├── 降级任务（30秒间隔）
+│   └── 刷新任务（10秒间隔，合并后）
+└── 顺序执行，避免竞争
+```
+
+**优化前（多线程）**：
+- HotKey-Scheduler：晋升、降级任务（2个线程）
+- HotKey-CacheDataUpdater-Scheduler：刷新任务（1个线程）
+- 问题：多线程可能互相影响，存在竞争条件
+
+**优化后（线程合并）**：
+- HotKey-Scheduler：晋升、降级、刷新任务（3个线程，统一管理）
+- 优势：统一调度，顺序执行，避免竞争，职责分明
+
+**关键原则**：
+- **单一职责**：每个模块职责清晰，不互相干扰
+- **顺序执行**：关键操作顺序执行，避免竞争条件
+- **数据完整性**：降级前检查，降级时清理，确保资源完整释放
+- **异常隔离**：单个操作失败不影响其他操作
+
 ## 7. 性能特性
 
 ### 7.1 时间复杂度
@@ -511,7 +588,53 @@ HotKeyClient (协调者)
 - `updateCache(String key, String value)`: 更新本地缓存
 - `shutdown()`: 关闭客户端，停止定时任务和刷新服务
 
-## 9. 注意事项
+## 9. 设计优化总结
+
+### 9.1 线程合并优化
+
+**优化前**：
+- HotKey-Scheduler：管理晋升、降级任务（2个线程）
+- HotKey-CacheDataUpdater-Scheduler：管理刷新任务（1个独立线程）
+- 问题：多线程可能互相影响，存在竞争条件
+
+**优化后**：
+- HotKey-Scheduler：统一管理晋升、降级、刷新任务（3个线程，统一调度）
+- 优势：
+  - 统一调度，避免线程竞争
+  - 顺序执行，保证操作原子性
+  - 职责分明，便于维护
+  - 减少线程数量，降低系统开销
+
+### 9.2 数据完整性保证
+
+**优化内容**：
+1. **降级前检查**：
+   - 检查存储层数据状态
+   - 检查注册表注册状态
+   - 记录数据完整性信息，用于监控和排查
+
+2. **降级时顺序清理**：
+   - 从热Key列表移除
+   - 清理存储层数据
+   - 清理注册表
+   - 清理失败计数
+   - 使用synchronized保证原子性
+
+3. **晋升时说明**：
+   - 晋升时只更新热Key列表
+   - 数据存储和注册表注册在首次访问时完成（需要redisGetter回调函数）
+
+### 9.3 QPS计算优化
+
+**优化前**：
+- QPS = (count * 1000.0) / elapsed
+- 问题：窗口刚重置后短时间内大量访问会导致QPS虚高
+
+**优化后**：
+- QPS = count / (double) windowSize
+- 优势：使用窗口大小计算QPS，平滑QPS计算，避免突发访问导致的误判
+
+## 10. 注意事项
 
 1. **内存管理**：
    - 注册表会存储所有热Key的redisGetter，如果热Key数量很大，需要注意内存占用
@@ -525,6 +648,7 @@ HotKeyClient (协调者)
 
 3. **刷新频率**：
    - 刷新间隔需要根据业务需求调整，过短会增加Redis压力，过长会导致数据不新鲜
+   - **重要**：刷新间隔应小于`expire-after-write`，确保在缓存过期前刷新
 
 4. **失败阈值**：
    - 失败阈值需要根据业务场景调整，避免误删正常的key
@@ -535,3 +659,20 @@ HotKeyClient (协调者)
 6. **性能优化**：
    - 系统已实现多项性能优化（CAS无锁算法、原子操作优化、内存优化）
    - 在高并发场景下，TP99延迟得到显著优化
+
+7. **数据完整性保证**：
+   - **晋升时**：热Key列表立即更新，但数据存储和注册表注册在首次访问时完成（需要redisGetter）
+   - **降级前**：系统会检查数据完整性（存储层、注册表），记录状态用于监控和排查
+   - **降级时**：顺序执行清理操作（热Key列表 → 存储层 → 注册表 → 失败计数），保证完整性
+   - **线程合并**：所有定时任务统一由SchedulerManager管理，避免多线程竞争
+
+8. **线程管理**：
+   - **统一调度**：晋升、降级、刷新任务统一由SchedulerManager管理
+   - **顺序执行**：关键操作在同一线程中顺序执行，保证原子性
+   - **职责分明**：每个任务职责清晰，互不干扰
+   - **异常隔离**：单个任务失败不影响其他任务
+
+9. **缓存过期时间配置**：
+   - **重要**：`expire-after-write`应大于`refresh.interval`，确保在过期前刷新
+   - 建议：`expire-after-write` >= `refresh.interval * 2`，提供安全余量
+   - 示例：刷新间隔10秒，过期时间建议至少20秒，推荐60秒

@@ -44,13 +44,6 @@ public interface HotKeyMonitorMXBean {
     long getRecorderMemorySize();
 
     /**
-     * 获取缓存数据更新器注册表的数据量
-     *
-     * @return 缓存数据更新器注册表的数据量
-     */
-    int getUpdaterSize();
-
-    /**
      * 获取wrapGet总调用次数
      *
      * @return wrapGet总调用次数
