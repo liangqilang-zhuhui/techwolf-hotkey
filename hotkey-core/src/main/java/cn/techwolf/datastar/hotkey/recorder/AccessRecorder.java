@@ -31,10 +31,18 @@ public class AccessRecorder implements IAccessRecorder {
     private static final double CAPACITY_ALERT_RATIO = 0.9;
 
     /**
-     * 预筛选阈值：只有访问次数达到此值的key才进入accessStats
-     * 目的：过滤极低流量的key，减少内存占用
+     * 预筛选阈值最小值（防止阈值过低导致太多key进入accessStats）
      */
-    private static final int PRE_FILTER_THRESHOLD = 600;
+    private static final int MIN_PRE_FILTER_THRESHOLD = 10;
+
+    /**
+     * 预筛选阈值：只有访问次数达到此值的key才进入accessStats
+     * 计算公式：preFilterThreshold = max(MIN_PRE_FILTER_THRESHOLD, (warmKeyThreshold * promotionInterval / 1000.0) / 4)
+     * 目的：过滤极低流量的key，减少内存占用
+     * 设计理念：在晋升间隔内，如果访问次数达到温Key阈值的1/4，则进入accessStats
+     *         这样确保有足够流量潜力的key能进入晋升通道，同时过滤掉极低流量的key
+     */
+    private final int preFilterThreshold;
 
     /**
      * 预筛选器：记录key的访问次数，只有达到阈值的才升级到accessStats
@@ -74,6 +82,18 @@ public class AccessRecorder implements IAccessRecorder {
         this.accessStats = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240));
         this.preFilter = new ConcurrentHashMap<>(Math.min(maxCapacity * 2, 20480)); // 预筛选器容量更大
         this.inactiveExpireTimeMs = config.getRecorder().getInactiveExpireTime() * 1000L;
+        
+        // 动态计算预筛选阈值：四分之一的 warmKeyThreshold * promotionInterval
+        // 公式：preFilterThreshold = (warmKeyThreshold * promotionInterval / 1000.0) / 4
+        // 设置最小值，防止阈值过低导致太多key进入accessStats
+        double warmKeyThreshold = config.getDetection().getWarmKeyQpsThreshold();
+        long promotionInterval = config.getDetection().getPromotionInterval();
+        // promotionInterval 是毫秒，需要转换为秒
+        int calculatedThreshold = (int) ((warmKeyThreshold * promotionInterval / 1000.0) / 4);
+        this.preFilterThreshold = Math.max(MIN_PRE_FILTER_THRESHOLD, calculatedThreshold);
+        
+        log.info("预筛选阈值计算完成: warmKeyThreshold={} QPS, promotionInterval={}ms, 计算值={}, 最终阈值={}",
+                warmKeyThreshold, promotionInterval, calculatedThreshold, preFilterThreshold);
     }
 
     @Override
@@ -92,7 +112,7 @@ public class AccessRecorder implements IAccessRecorder {
                 int count = preFilter.compute(key, (k, v) -> (v == null ? 0 : v) + 1);
                 
                 // 达到预筛选阈值，升级到accessStats
-                if (count >= PRE_FILTER_THRESHOLD) {
+                if (count >= preFilterThreshold) {
                     // 使用computeIfAbsent，避免并发创建
                     AccessInfo newInfo = accessStats.computeIfAbsent(
                             key,

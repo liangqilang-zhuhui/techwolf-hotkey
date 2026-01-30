@@ -8,7 +8,9 @@
 - hotKeyQpsThreshold: 30.0 (热Key QPS阈值)
 - warmKeyQpsThreshold: 10.0 (温Key QPS阈值)
 - recorderMaxCapacity: 15 (访问记录最大容量)
-- preFilterThreshold: 10000 (预筛选阈值：只有访问次数达到此值的key才进入accessStats)
+- promotionInterval: 5000ms (晋升间隔)
+- preFilterThreshold: 动态计算 = max(10, (warmKeyThreshold * promotionInterval / 1000.0) / 4)
+  (预筛选阈值：只有访问次数达到此值的key才进入accessStats，防止固定阈值不合理)
 
 使用方法：
   python3 hotkey_test.py              # 运行基础功能测试
@@ -45,7 +47,15 @@ API_MONITOR_REFRESH = f"{BASE_URL}/api/hotkey/monitor/refresh"
 HOT_KEY_QPS_THRESHOLD = 30.0  # 热Key QPS阈值
 WARM_KEY_QPS_THRESHOLD = 10.0  # 温Key QPS阈值
 RECORDER_MAX_CAPACITY = 15  # 访问记录最大容量
-PRE_FILTER_THRESHOLD = 10000  # 预筛选阈值：只有访问次数达到此值的key才进入accessStats
+PROMOTION_INTERVAL_MS = 5000  # 晋升间隔（毫秒）
+MIN_PRE_FILTER_THRESHOLD = 10  # 预筛选阈值最小值
+
+# 预筛选阈值计算公式：(warmKeyThreshold * promotionInterval / 1000.0) / 4
+# 设置最小值，防止阈值过低导致太多key进入accessStats
+# 测试配置：warmKeyThreshold=10.0 QPS, promotionInterval=5000ms
+# 计算：PRE_FILTER_THRESHOLD = max(10, (10.0 * 5) / 4) = max(10, 12.5) = 12
+calculated_pre_filter = int((WARM_KEY_QPS_THRESHOLD * PROMOTION_INTERVAL_MS / 1000.0) / 4)
+PRE_FILTER_THRESHOLD = max(MIN_PRE_FILTER_THRESHOLD, calculated_pre_filter)
 
 # 测试结果统计
 test_results = {
@@ -1195,7 +1205,8 @@ def main():
     print(f"  - 热Key QPS阈值: {HOT_KEY_QPS_THRESHOLD}")
     print(f"  - 温Key QPS阈值: {WARM_KEY_QPS_THRESHOLD}")
     print(f"  - 访问记录最大容量: {RECORDER_MAX_CAPACITY}")
-    print(f"  - 预筛选阈值: {PRE_FILTER_THRESHOLD} (只有访问次数达到此值的key才进入accessStats)")
+    print(f"  - 晋升间隔: {PROMOTION_INTERVAL_MS}ms")
+    print(f"  - 预筛选阈值: {PRE_FILTER_THRESHOLD} (动态计算: max({MIN_PRE_FILTER_THRESHOLD}, ({WARM_KEY_QPS_THRESHOLD} * {PROMOTION_INTERVAL_MS}/1000) / 4))")
     print(f"  - 服务地址: {BASE_URL}")
     print("="*60)
     
