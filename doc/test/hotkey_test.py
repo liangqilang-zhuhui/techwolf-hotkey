@@ -8,6 +8,7 @@
 - hotKeyQpsThreshold: 30.0 (热Key QPS阈值)
 - warmKeyQpsThreshold: 10.0 (温Key QPS阈值)
 - recorderMaxCapacity: 15 (访问记录最大容量)
+- preFilterThreshold: 10000 (预筛选阈值：只有访问次数达到此值的key才进入accessStats)
 
 使用方法：
   python3 hotkey_test.py              # 运行基础功能测试
@@ -44,6 +45,7 @@ API_MONITOR_REFRESH = f"{BASE_URL}/api/hotkey/monitor/refresh"
 HOT_KEY_QPS_THRESHOLD = 30.0  # 热Key QPS阈值
 WARM_KEY_QPS_THRESHOLD = 10.0  # 温Key QPS阈值
 RECORDER_MAX_CAPACITY = 15  # 访问记录最大容量
+PRE_FILTER_THRESHOLD = 10000  # 预筛选阈值：只有访问次数达到此值的key才进入accessStats
 
 # 测试结果统计
 test_results = {
@@ -76,6 +78,20 @@ def wait_for_demotion(seconds: int = 61):
     """等待热Key降级（降级间隔60秒，等待61秒确保完成）"""
     print(f"    等待 {seconds} 秒，让热Key检测完成降级...")
     time.sleep(seconds)
+
+
+def pass_pre_filter(key: str):
+    """通过预筛选阈值：对key进行足够次数的访问以通过预筛选（10000次）"""
+    batch_size = 1000
+    pre_filter_batches = (PRE_FILTER_THRESHOLD + batch_size - 1) // batch_size
+    
+    for i in range(pre_filter_batches):
+        try:
+            requests.get(API_GET_BATCH, params={"key": key, "count": batch_size}, timeout=30)
+            time.sleep(0.1)  # 稍微延迟，避免过快
+        except Exception as e:
+            print(f"    预筛选访问失败: {e}")
+            break
 
 
 def check_is_hot_key(key: str) -> bool:
@@ -160,16 +176,27 @@ def test_2_hot_key_detection():
         requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
         log_test("设置测试key", True)
         
-        # 2. 高频访问（超过30 QPS，持续10秒，总共至少300次访问）
+        # 2. 高频访问（需要先通过预筛选阈值10000次，然后才能触发热Key）
         # 使用批量接口快速访问
-        print(f"    开始高频访问 key={key}，目标QPS > {HOT_KEY_QPS_THRESHOLD}")
+        print(f"    开始高频访问 key={key}，先通过预筛选阈值{PRE_FILTER_THRESHOLD}次，然后目标QPS > {HOT_KEY_QPS_THRESHOLD}")
         start_time = time.time()
         access_count = 0
-        target_count = int(HOT_KEY_QPS_THRESHOLD * 10) + 100  # 10秒内至少400次访问
         
-        # 使用批量接口，每次访问100次
-        batch_size = 100
-        batches = (target_count + batch_size - 1) // batch_size
+        # 第一步：通过预筛选阈值（至少10000次访问）
+        print(f"    第一步：通过预筛选阈值（需要至少{PRE_FILTER_THRESHOLD}次访问）...")
+        batch_size = 1000
+        pre_filter_batches = (PRE_FILTER_THRESHOLD + batch_size - 1) // batch_size
+        
+        for i in range(pre_filter_batches):
+            response = requests.get(API_GET_BATCH, params={"key": key, "count": batch_size}, timeout=30)
+            if response.status_code == 200:
+                access_count += batch_size
+            time.sleep(0.1)  # 稍微延迟，避免过快
+        
+        # 第二步：继续高频访问以触发热Key（超过30 QPS，持续10秒）
+        print(f"    第二步：继续高频访问以触发热Key（目标QPS > {HOT_KEY_QPS_THRESHOLD}）...")
+        target_qps_count = int(HOT_KEY_QPS_THRESHOLD * 10) + 100  # 10秒内至少400次访问
+        batches = (target_qps_count + batch_size - 1) // batch_size
         
         for i in range(batches):
             response = requests.get(API_GET_BATCH, params={"key": key, "count": batch_size}, timeout=30)
@@ -232,10 +259,24 @@ def test_3_warm_key_detection():
         requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
         log_test("设置测试key", True)
         
-        # 2. 中等频率访问（10-30 QPS之间，持续10秒）
-        print(f"    开始中等频率访问 key={key}，目标QPS在 {WARM_KEY_QPS_THRESHOLD}-{HOT_KEY_QPS_THRESHOLD} 之间")
+        # 2. 中等频率访问（需要先通过预筛选阈值10000次，然后10-30 QPS之间，持续10秒）
+        print(f"    开始中等频率访问 key={key}，先通过预筛选阈值{PRE_FILTER_THRESHOLD}次，然后目标QPS在 {WARM_KEY_QPS_THRESHOLD}-{HOT_KEY_QPS_THRESHOLD} 之间")
         start_time = time.time()
         access_count = 0
+        
+        # 第一步：通过预筛选阈值（至少10000次访问）
+        print(f"    第一步：通过预筛选阈值（需要至少{PRE_FILTER_THRESHOLD}次访问）...")
+        batch_size = 1000
+        pre_filter_batches = (PRE_FILTER_THRESHOLD + batch_size - 1) // batch_size
+        
+        for i in range(pre_filter_batches):
+            response = requests.get(API_GET_BATCH, params={"key": key, "count": batch_size}, timeout=30)
+            if response.status_code == 200:
+                access_count += batch_size
+            time.sleep(0.1)  # 稍微延迟，避免过快
+        
+        # 第二步：中等频率访问（10-30 QPS之间，持续10秒）
+        print(f"    第二步：中等频率访问（目标QPS在 {WARM_KEY_QPS_THRESHOLD}-{HOT_KEY_QPS_THRESHOLD} 之间）...")
         target_qps = (WARM_KEY_QPS_THRESHOLD + HOT_KEY_QPS_THRESHOLD) / 2  # 20 QPS
         target_count = int(target_qps * 10)  # 10秒内200次访问
         
@@ -284,11 +325,17 @@ def test_4_capacity_limit():
         
         log_test(f"创建 {len(keys)} 个key", True)
         
-        # 对每个key进行高频访问（触发容量限制）
-        print(f"    对每个key进行高频访问（触发容量清理）...")
+        # 对每个key进行高频访问（需要先通过预筛选阈值，然后触发容量限制）
+        print(f"    对每个key进行高频访问（先通过预筛选阈值{PRE_FILTER_THRESHOLD}次，然后触发容量清理）...")
         for key in keys:
-            # 每个key访问50次，快速触发
-            requests.get(API_GET_BATCH, params={"key": key, "count": 50}, timeout=10)
+            # 第一步：通过预筛选阈值（至少10000次访问）
+            batch_size = 1000
+            pre_filter_batches = (PRE_FILTER_THRESHOLD + batch_size - 1) // batch_size
+            for i in range(pre_filter_batches):
+                requests.get(API_GET_BATCH, params={"key": key, "count": batch_size}, timeout=30)
+                time.sleep(0.1)
+            # 第二步：继续访问以触发容量限制
+            requests.get(API_GET_BATCH, params={"key": key, "count": 100}, timeout=10)
         
         # 等待清理完成
         wait_for_promotion(6)
@@ -373,8 +420,10 @@ def test_6_cache_hit_rate():
         requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
         log_test("设置测试key", True)
         
-        # 2. 高频访问触发热Key
-        print(f"    高频访问触发热Key...")
+        # 2. 高频访问触发热Key（需要先通过预筛选阈值）
+        print(f"    高频访问触发热Key（先通过预筛选阈值{PRE_FILTER_THRESHOLD}次）...")
+        pass_pre_filter(key)
+        # 继续高频访问以触发热Key
         requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         wait_for_promotion(6)
         
@@ -476,9 +525,11 @@ def test_9_multiple_hot_keys():
         
         log_test(f"创建 {hot_key_count} 个测试key", True)
         
-        # 2. 对每个key进行高频访问
-        print(f"    对每个key进行高频访问（触发热Key）...")
+        # 2. 对每个key进行高频访问（需要先通过预筛选阈值）
+        print(f"    对每个key进行高频访问（先通过预筛选阈值{PRE_FILTER_THRESHOLD}次，然后触发热Key）...")
         for key in keys:
+            pass_pre_filter(key)
+            # 继续高频访问以触发热Key
             requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         
         # 3. 等待晋升完成
@@ -522,7 +573,9 @@ def test_10_value_update():
         requests.post(API_SET, params={"key": key, "value": value1}, timeout=5)
         log_test("设置初始值", True)
         
-        # 2. 高频访问触发热Key
+        # 2. 高频访问触发热Key（需要先通过预筛选阈值）
+        pass_pre_filter(key)
+        # 继续高频访问以触发热Key
         requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         wait_for_promotion(6)
         
@@ -562,7 +615,9 @@ def test_11_delete_hot_key():
         requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
         log_test("设置测试key", True)
         
-        # 2. 高频访问触发热Key
+        # 2. 高频访问触发热Key（需要先通过预筛选阈值）
+        pass_pre_filter(key)
+        # 继续高频访问以触发热Key
         requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         wait_for_promotion(6)
         
@@ -626,8 +681,10 @@ def test_12_hot_key_demotion():
         requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
         log_test("设置测试key", True)
         
-        # 2. 高频访问触发热Key
-        print(f"    高频访问触发热Key...")
+        # 2. 高频访问触发热Key（需要先通过预筛选阈值）
+        print(f"    高频访问触发热Key（先通过预筛选阈值{PRE_FILTER_THRESHOLD}次）...")
+        pass_pre_filter(key)
+        # 继续高频访问以触发热Key
         requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         wait_for_promotion(6)
         
@@ -673,7 +730,9 @@ def test_13_write_triggers_cache_update():
         requests.post(API_SET, params={"key": key, "value": value1}, timeout=5)
         log_test("设置初始值", True)
         
-        # 2. 高频访问触发热Key
+        # 2. 高频访问触发热Key（需要先通过预筛选阈值）
+        pass_pre_filter(key)
+        # 继续高频访问以触发热Key
         requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         wait_for_promotion(6)
         
@@ -730,9 +789,11 @@ def test_14_top_n_limit():
         
         log_test(f"创建 {test_key_count} 个测试key", True)
         
-        # 2. 对每个key进行高频访问（确保QPS都超过阈值）
-        print(f"    对每个key进行高频访问（触发热Key）...")
+        # 2. 对每个key进行高频访问（需要先通过预筛选阈值，确保QPS都超过阈值）
+        print(f"    对每个key进行高频访问（先通过预筛选阈值{PRE_FILTER_THRESHOLD}次，然后触发热Key）...")
         for key in keys:
+            pass_pre_filter(key)
+            # 继续高频访问以触发热Key
             requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         
         # 3. 等待晋升完成
@@ -780,7 +841,9 @@ def test_15_refresh_failure_handling():
         requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
         log_test("设置测试key", True)
         
-        # 2. 高频访问触发热Key
+        # 2. 高频访问触发热Key（需要先通过预筛选阈值）
+        pass_pre_filter(key)
+        # 继续高频访问以触发热Key
         requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
         wait_for_promotion(6)
         
@@ -903,11 +966,14 @@ def test_long_running(duration_minutes=30, check_interval=60):
     max_hot_key_count = 0
     
     def create_and_trigger_hotkey(key_prefix: str, index: int) -> bool:
-        """创建并触发热Key"""
+        """创建并触发热Key（需要先通过预筛选阈值）"""
         key = f"{key_prefix}:{index}"
         value = f"value_{index}"
         try:
             requests.post(API_SET, params={"key": key, "value": value}, timeout=5)
+            # 先通过预筛选阈值
+            pass_pre_filter(key)
+            # 继续高频访问以触发热Key
             requests.get(API_GET_BATCH, params={"key": key, "count": 500}, timeout=30)
             return True
         except Exception as e:
@@ -955,6 +1021,27 @@ def test_long_running(duration_minutes=30, check_interval=60):
             print("  等待热Key晋升（6秒）...")
             time.sleep(6)
             
+            # 获取当前热Key列表
+            health = check_system_health()
+            hot_keys = health.get('hot_keys', [])
+            
+            # 方案1：在检查前再次访问热Key，确保缓存被填充
+            if hot_keys:
+                print(f"  访问热Key以确保缓存被填充（共{len(hot_keys)}个）...")
+                accessed_count = 0
+                for hot_key in hot_keys[:10]:  # 只访问前10个，避免过多请求
+                    try:
+                        # 访问1次即可，因为已经是热Key，会触发缓存写入
+                        requests.get(API_GET_BATCH, params={"key": hot_key, "count": 1}, timeout=5)
+                        accessed_count += 1
+                    except Exception as e:
+                        # 忽略访问失败，继续访问其他key
+                        pass
+                if accessed_count > 0:
+                    print(f"  已访问 {accessed_count} 个热Key，等待缓存更新（1秒）...")
+                    time.sleep(1)  # 等待缓存更新
+            
+            # 重新获取健康状态（缓存应该已经被填充）
             health = check_system_health()
             health_history.append(health)
             print_health_status(health)
@@ -1108,6 +1195,7 @@ def main():
     print(f"  - 热Key QPS阈值: {HOT_KEY_QPS_THRESHOLD}")
     print(f"  - 温Key QPS阈值: {WARM_KEY_QPS_THRESHOLD}")
     print(f"  - 访问记录最大容量: {RECORDER_MAX_CAPACITY}")
+    print(f"  - 预筛选阈值: {PRE_FILTER_THRESHOLD} (只有访问次数达到此值的key才进入accessStats)")
     print(f"  - 服务地址: {BASE_URL}")
     print("="*60)
     

@@ -26,7 +26,25 @@ public class AccessRecorder implements IAccessRecorder {
     private static final double CAPACITY_RETAIN_RATIO = 0.8;
 
     /**
+     * 容量告警阈值（超过此阈值时立即触发清理）
+     */
+    private static final double CAPACITY_ALERT_RATIO = 0.9;
+
+    /**
+     * 预筛选阈值：只有访问次数达到此值的key才进入accessStats
+     * 目的：过滤极低流量的key，减少内存占用
+     */
+    private static final int PRE_FILTER_THRESHOLD = 600;
+
+    /**
+     * 预筛选器：记录key的访问次数，只有达到阈值的才升级到accessStats
+     * 使用轻量级的ConcurrentHashMap，只存储key和访问次数
+     */
+    private final ConcurrentHashMap<String, Integer> preFilter;
+
+    /**
      * 访问统计信息（key -> AccessInfo）
+     * 只有通过预筛选的key才会存储在这里
      */
     private final ConcurrentHashMap<String, AccessInfo> accessStats;
 
@@ -54,6 +72,7 @@ public class AccessRecorder implements IAccessRecorder {
         this.config = config;
         this.maxCapacity = config.getRecorder().getMaxCapacity();
         this.accessStats = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240));
+        this.preFilter = new ConcurrentHashMap<>(Math.min(maxCapacity * 2, 20480)); // 预筛选器容量更大
         this.inactiveExpireTimeMs = config.getRecorder().getInactiveExpireTime() * 1000L;
     }
 
@@ -63,15 +82,53 @@ public class AccessRecorder implements IAccessRecorder {
             return;
         }
         try {
-            // 使用computeIfAbsent，避免额外的锁操作
-            AccessInfo info = accessStats.computeIfAbsent(
-                    key,
-                    k -> new AccessInfo(k, config.getRecorder().getWindowSize())
-            );
-            info.recordAccess();
+            // 先检查是否已经在accessStats中
+            AccessInfo info = accessStats.get(key);
+            if (info != null) {
+                // 已经在accessStats中，直接记录访问
+                info.recordAccess();
+            } else {
+                // 不在accessStats中，先进入预筛选器
+                int count = preFilter.compute(key, (k, v) -> (v == null ? 0 : v) + 1);
+                
+                // 达到预筛选阈值，升级到accessStats
+                if (count >= PRE_FILTER_THRESHOLD) {
+                    // 使用computeIfAbsent，避免并发创建
+                    AccessInfo newInfo = accessStats.computeIfAbsent(
+                            key,
+                            k -> {
+                                preFilter.remove(k); // 从预筛选器移除
+                                return new AccessInfo(k, config.getRecorder().getWindowSize());
+                            }
+                    );
+                    newInfo.recordAccess();
+                }
+            }
+            
+            // 容量告警：如果容量超过90%，立即触发异步清理
+            int currentSize = accessStats.size();
+            if (currentSize >= maxCapacity * CAPACITY_ALERT_RATIO) {
+                triggerAsyncCleanup();
+            }
         } catch (Exception e) {
             log.debug("记录访问统计失败, key: {}", key, e);
         }
+    }
+
+    /**
+     * 异步触发清理任务
+     */
+    private void triggerAsyncCleanup() {
+        if (cleanupInProgress.get()) {
+            return;
+        }
+        CompletableFuture.runAsync(() -> {
+            try {
+                cleanupKeys();
+            } catch (Exception e) {
+                log.warn("异步清理任务执行失败", e);
+            }
+        });
     }
 
     @Override
@@ -186,9 +243,10 @@ public class AccessRecorder implements IAccessRecorder {
 
     /**
      * 清理过期和低QPS的key（实际执行清理逻辑）
-     * 包含两种触发机制：
+     * 包含三种触发机制：
      * 1. 时间触发：清理超过指定时间未访问的非活跃key
-     * 2. 容量触发：当容量超限时，按QPS排序，移除QPS最低的key
+     * 2. 预筛选器清理：清理预筛选器中的过期key
+     * 3. 容量触发：当容量超限时，按QPS排序，移除QPS最低的key
      * 
      * 保留热Key和温Key，优先清理冷Key
      * 清理策略：保留80%的容量，清理20%
@@ -201,18 +259,21 @@ public class AccessRecorder implements IAccessRecorder {
             // 第一部分：时间触发 - 清理过期key
             int expiredCount = cleanupExpiredKeys();
             
-            // 第二部分：容量触发 - 清理低QPS key
+            // 第二部分：清理预筛选器中的过期key（避免内存泄漏）
+            int preFilterCleaned = cleanupPreFilter();
+            
+            // 第三部分：容量触发 - 清理低QPS key
             int currentSize = accessStats.size();
             int lowQpsCount = 0;
             if (currentSize >= maxCapacity) {
-                lowQpsCount = cleanupLowQpsKeysByCapacity(currentSize);
+                lowQpsCount = cleanupLowQpsKeysSimple(currentSize);
             }
             
             // 记录清理结果
-            if (expiredCount > 0 || lowQpsCount > 0) {
+            if (expiredCount > 0 || preFilterCleaned > 0 || lowQpsCount > 0) {
                 long cost = System.currentTimeMillis() - startTime;
-                log.info("清理key完成, 过期清理: {}, 低QPS清理: {}, 清理前容量: {}, 清理后容量: {}, 耗时: {}ms",
-                        expiredCount, lowQpsCount, initialSize, accessStats.size(), cost);
+                log.info("清理key完成, 过期清理: {}, 预筛选器清理: {}, 低QPS清理: {}, 清理前容量: {}, 清理后容量: {}, 耗时: {}ms",
+                        expiredCount, preFilterCleaned, lowQpsCount, initialSize, accessStats.size(), cost);
             }
         } catch (Exception e) {
             log.error("清理key失败", e);
@@ -248,29 +309,86 @@ public class AccessRecorder implements IAccessRecorder {
     }
 
     /**
-     * 容量触发：当容量超限时，按QPS排序，移除QPS最低的key
-     * 保留热Key和温Key，优先清理冷Key
-     * 清理策略：保留80%的容量，清理20%
+     * 清理预筛选器：移除长时间未访问的key
+     * 预筛选器中的key如果长时间未访问，说明流量很低，直接清理
      * 
-     * 性能优化：
-     * 1. 只遍历一次，同时更新QPS和收集候选key
-     * 2. 使用部分排序（TopK）而不是全排序
-     * 3. 使用PriorityQueue实现高效的TopK选择
+     * @return 清理的key数量
+     */
+    private int cleanupPreFilter() {
+        // 如果预筛选器容量过大，清理一部分（保留最近访问的）
+        int preFilterSize = preFilter.size();
+        if (preFilterSize > maxCapacity) {
+            // 如果预筛选器容量超过maxCapacity，清理一半
+            int toRemove = preFilterSize / 2;
+            Iterator<Map.Entry<String, Integer>> iterator = preFilter.entrySet().iterator();
+            int removed = 0;
+            while (iterator.hasNext() && removed < toRemove) {
+                iterator.next();
+                iterator.remove();
+                removed++;
+            }
+            return removed;
+        }
+        return 0;
+    }
+
+    /**
+     * 容量触发：简化版清理低QPS key
+     * 直接遍历收集低QPS key，排序后清理末尾
      * 
      * @param currentSize 当前容量
      * @return 清理的key数量
      */
-    private int cleanupLowQpsKeysByCapacity(int currentSize) {
+    private int cleanupLowQpsKeysSimple(int currentSize) {
         int toRemove = calculateKeysToRemove(currentSize);
         if (toRemove <= 0) {
             return 0;
         }
         
-        // 收集需要清理的低QPS key
-        PriorityQueue<Map.Entry<String, AccessInfo>> minHeap = collectLowQpsKeys(toRemove);
+        double warmKeyThreshold = config.getDetection().getWarmKeyQpsThreshold();
+        
+        // 收集所有冷Key（QPS < warmKeyThreshold）及其QPS
+        List<Map.Entry<String, Double>> coldKeys = new ArrayList<>();
+        for (Map.Entry<String, AccessInfo> entry : accessStats.entrySet()) {
+            AccessInfo info = entry.getValue();
+            info.updateQps();
+            double qps = info.getQps();
+            
+            // 只收集冷Key
+            if (qps < warmKeyThreshold) {
+                coldKeys.add(new AbstractMap.SimpleEntry<>(entry.getKey(), qps));
+            }
+        }
+        
+        // 如果冷Key数量不足，按QPS排序所有key（但优先保留热Key和温Key）
+        if (coldKeys.size() < toRemove) {
+            // 收集所有key的QPS
+            List<Map.Entry<String, Double>> allKeys = new ArrayList<>();
+            for (Map.Entry<String, AccessInfo> entry : accessStats.entrySet()) {
+                AccessInfo info = entry.getValue();
+                info.updateQps();
+                allKeys.add(new AbstractMap.SimpleEntry<>(entry.getKey(), info.getQps()));
+            }
+            // 按QPS升序排序
+            allKeys.sort(Comparator.comparingDouble(Map.Entry::getValue));
+            // 取前toRemove个（QPS最小的）
+            coldKeys = allKeys.subList(0, Math.min(toRemove, allKeys.size()));
+        } else {
+            // 冷Key数量足够，按QPS升序排序
+            coldKeys.sort(Comparator.comparingDouble(Map.Entry::getValue));
+            // 只取前toRemove个
+            coldKeys = coldKeys.subList(0, Math.min(toRemove, coldKeys.size()));
+        }
         
         // 移除收集到的key
-        return removeCollectedKeys(minHeap);
+        int removedCount = 0;
+        for (Map.Entry<String, Double> entry : coldKeys) {
+            if (accessStats.remove(entry.getKey()) != null) {
+                removedCount++;
+            }
+        }
+        
+        return removedCount;
     }
 
     /**
@@ -284,60 +402,6 @@ public class AccessRecorder implements IAccessRecorder {
         return currentSize - targetSize;
     }
 
-    /**
-     * 收集需要清理的低QPS key（使用小顶堆）
-     * 
-     * @param toRemove 需要清理的key数量
-     * @return 包含需要清理key的小顶堆
-     */
-    private PriorityQueue<Map.Entry<String, AccessInfo>> collectLowQpsKeys(int toRemove) {
-        double warmKeyThreshold = config.getDetection().getWarmKeyQpsThreshold();
-        
-        PriorityQueue<Map.Entry<String, AccessInfo>> minHeap = new PriorityQueue<>(
-                toRemove + 1,
-                Comparator.comparingDouble(entry -> entry.getValue().getQps())
-        );
-        
-        // 单次遍历：更新QPS并收集候选清理的key
-        for (Map.Entry<String, AccessInfo> entry : accessStats.entrySet()) {
-            AccessInfo info = entry.getValue();
-            info.updateQps();
-            double qps = info.getQps();
-            
-            // 跳过热Key和温Key，只清理冷Key
-            if (qps >= warmKeyThreshold) {
-                continue;
-            }
-            
-            // 使用小顶堆维护QPS最小的toRemove个key
-            if (minHeap.size() < toRemove) {
-                minHeap.offer(entry);
-            } else if (qps < minHeap.peek().getValue().getQps()) {
-                minHeap.poll();
-                minHeap.offer(entry);
-            }
-        }
-        
-        return minHeap;
-    }
-
-    /**
-     * 移除收集到的key
-     * 
-     * @param minHeap 包含需要清理key的小顶堆
-     * @return 实际移除的key数量
-     */
-    private int removeCollectedKeys(PriorityQueue<Map.Entry<String, AccessInfo>> minHeap) {
-        int removedCount = 0;
-        while (!minHeap.isEmpty()) {
-            Map.Entry<String, AccessInfo> entry = minHeap.poll();
-            String key = entry.getKey();
-            if (accessStats.remove(key) != null) {
-                removedCount++;
-            }
-        }
-        return removedCount;
-    }
 
     /**
      * 访问信息

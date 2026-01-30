@@ -14,6 +14,8 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import static java.lang.Thread.sleep;
+
 /**
  * 定时任务管理器实现
  * 职责：统一管理所有定时任务的启动、停止和资源释放
@@ -124,6 +126,14 @@ public class SchedulerManager implements IScheduler {
                         promotionCount++;
                         if (promotionCount >= DEMOTION_TASK_FREQUENCY) {
                             promotionCount = 0;
+                            //Sleep 防止刚晋级的key 回收
+                            try {
+                                Thread.sleep(promotionInterval);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                log.warn("降级任务延迟被中断", e);
+                                return;
+                            }
                             executeDemotionTask();
                         }
                     } catch (Exception e) {
