@@ -61,7 +61,7 @@ public class HotKeyConfig {
          * 温Key访问频率阈值（次/秒）
          * 冷key需要每秒访问量大于500才可以升级到温key
          */
-        private double warmKeyQpsThreshold = HotKeyConfigDefaults.Detection.WARM_KEY_QPS_THRESHOLD;
+        private int warmKeyQpsThreshold = HotKeyConfigDefaults.Detection.WARM_KEY_QPS_THRESHOLD;
 
         /**
          * 筛选器晋升热Key的探测间隔（毫秒）

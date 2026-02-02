@@ -28,13 +28,6 @@ public interface IAccessRecorder {
     Map<String, Double> getAccessStatistics();
 
     /**
-     * 获取温key列表（QPS >= 500 且 < 3000）
-     *
-     * @return 温key集合
-     */
-    Set<String> getWarmKeys();
-
-    /**
      * 获取热key列表（QPS >= 3000）
      *
      * @return 热key集合

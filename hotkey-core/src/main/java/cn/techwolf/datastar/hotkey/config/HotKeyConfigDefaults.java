@@ -23,8 +23,8 @@ public final class HotKeyConfigDefaults {
      */
     public static final class Detection {
         public static final int TOP_N = 20;
-        public static final double HOT_KEY_QPS_THRESHOLD = 500.0;
-        public static final double WARM_KEY_QPS_THRESHOLD = 200.0;
+        public static final int HOT_KEY_QPS_THRESHOLD = 500;
+        public static final int WARM_KEY_QPS_THRESHOLD = 200;
         public static final long PROMOTION_INTERVAL = 5000L;
     }
 

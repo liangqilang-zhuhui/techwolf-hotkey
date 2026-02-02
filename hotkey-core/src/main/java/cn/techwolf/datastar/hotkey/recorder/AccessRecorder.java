@@ -33,13 +33,13 @@ public class AccessRecorder implements IAccessRecorder {
     /**
      * 预筛选阈值最小值（防止阈值过低导致太多key进入accessStats）
      */
-    private static final int MIN_PRE_FILTER_THRESHOLD = 10;
+    private static final int MIN_PRE_FILTER_THRESHOLD = 100;
 
     /**
      * 预筛选阈值：只有访问次数达到此值的key才进入accessStats
-     * 计算公式：preFilterThreshold = max(MIN_PRE_FILTER_THRESHOLD, (warmKeyThreshold * promotionInterval / 1000.0) / 4)
+     * 计算公式：preFilterThreshold = max(MIN_PRE_FILTER_THRESHOLD, (warmKeyThreshold * promotionInterval / 1000.0) )
      * 目的：过滤极低流量的key，减少内存占用
-     * 设计理念：在晋升间隔内，如果访问次数达到温Key阈值的1/4，则进入accessStats
+     * 设计理念：在晋升间隔内，如果访问次数达到温Key阈值，则进入accessStats
      *         这样确保有足够流量潜力的key能进入晋升通道，同时过滤掉极低流量的key
      */
     private final int preFilterThreshold;
@@ -60,6 +60,8 @@ public class AccessRecorder implements IAccessRecorder {
      * 最大容量
      */
     private final int maxCapacity;
+
+    private final int maxpreFilterCapacity = 1000000;
 
     /**
      * 配置参数
@@ -83,17 +85,9 @@ public class AccessRecorder implements IAccessRecorder {
         this.preFilter = new ConcurrentHashMap<>(Math.min(maxCapacity * 2, 20480)); // 预筛选器容量更大
         this.inactiveExpireTimeMs = config.getRecorder().getInactiveExpireTime() * 1000L;
         
-        // 动态计算预筛选阈值：四分之一的 warmKeyThreshold * promotionInterval
-        // 公式：preFilterThreshold = (warmKeyThreshold * promotionInterval / 1000.0) / 4
-        // 设置最小值，防止阈值过低导致太多key进入accessStats
-        double warmKeyThreshold = config.getDetection().getWarmKeyQpsThreshold();
-        long promotionInterval = config.getDetection().getPromotionInterval();
-        // promotionInterval 是毫秒，需要转换为秒
-        int calculatedThreshold = (int) ((warmKeyThreshold * promotionInterval / 1000.0) / 4);
+        int calculatedThreshold = (int) ((config.getDetection().getWarmKeyQpsThreshold() * config.getDetection().getPromotionInterval() / 1000));
         this.preFilterThreshold = Math.max(MIN_PRE_FILTER_THRESHOLD, calculatedThreshold);
-        
-        log.info("预筛选阈值计算完成: warmKeyThreshold={} QPS, promotionInterval={}ms, 计算值={}, 最终阈值={}",
-                warmKeyThreshold, promotionInterval, calculatedThreshold, preFilterThreshold);
+        log.info("预筛选阈值计算完成: 计算值={}, 最终阈值={}", calculatedThreshold, preFilterThreshold);
     }
 
     @Override
@@ -160,20 +154,6 @@ public class AccessRecorder implements IAccessRecorder {
         });
         return stats;
     }
-
-    @Override
-    public Set<String> getWarmKeys() {
-        double warmKeyThreshold = config.getDetection().getWarmKeyQpsThreshold();
-        return accessStats.entrySet().stream()
-                .filter(entry -> {
-                    entry.getValue().updateQps();
-                    double qps = entry.getValue().getQps();
-                    return qps >= warmKeyThreshold && qps < config.getDetection().getHotKeyQpsThreshold();
-                })
-                .map(Map.Entry::getKey)
-                .collect(Collectors.toSet());
-    }
-
     @Override
     public Set<String> getHotKeys() {
         double hotKeyThreshold = config.getDetection().getHotKeyQpsThreshold();
@@ -328,7 +308,7 @@ public class AccessRecorder implements IAccessRecorder {
     private void cleanupKeysInternal() {
         long startTime = System.currentTimeMillis();
         int initialSize = accessStats.size();
-        
+        int preFilterinitialSize = preFilter.size();
         try {
             // 第一部分：时间触发 - 清理过期key
             int expiredCount = cleanupExpiredKeys();
@@ -346,8 +326,8 @@ public class AccessRecorder implements IAccessRecorder {
             // 记录清理结果
             if (expiredCount > 0 || preFilterCleaned > 0 || lowQpsCount > 0) {
                 long cost = System.currentTimeMillis() - startTime;
-                log.info("清理key完成, 过期清理: {}, 预筛选器清理: {}, 低QPS清理: {}, 清理前容量: {}, 清理后容量: {}, 耗时: {}ms",
-                        expiredCount, preFilterCleaned, lowQpsCount, initialSize, accessStats.size(), cost);
+                log.info("清理key完成, 过期清理: {}, 预筛选器清理前: {}, 预筛选器已清理: {}, 低QPS清理: {}, 访问记录清理前容量: {}, 访问记录清理后容量: {}, 耗时: {}ms",
+                        expiredCount, preFilterinitialSize, preFilterCleaned, lowQpsCount, initialSize, accessStats.size(), cost);
             }
         } catch (Exception e) {
             log.error("清理key失败", e);
@@ -383,27 +363,44 @@ public class AccessRecorder implements IAccessRecorder {
     }
 
     /**
-     * 清理预筛选器：移除长时间未访问的key
-     * 预筛选器中的key如果长时间未访问，说明流量很低，直接清理
+     * 清理预筛选器：使用快照方式收集key，然后批量删除（线程安全）
+     * 清理到目标容量（保留80%），避免迭代期间的并发修改问题
      * 
      * @return 清理的key数量
      */
     private int cleanupPreFilter() {
-        // 如果预筛选器容量过大，清理一部分（保留最近访问的）
         int preFilterSize = preFilter.size();
-        if (preFilterSize > maxCapacity) {
-            // 如果预筛选器容量超过maxCapacity，清理一半
-            int toRemove = preFilterSize / 2;
-            Iterator<Map.Entry<String, Integer>> iterator = preFilter.entrySet().iterator();
-            int removed = 0;
-            while (iterator.hasNext() && removed < toRemove) {
-                iterator.next();
-                iterator.remove();
+        int targetSize = (int) (maxpreFilterCapacity * CAPACITY_RETAIN_RATIO);
+        
+        // 如果预筛选器大小未超过目标容量，无需清理
+        if (preFilterSize <= targetSize) {
+            return 0;
+        }
+        
+        int toRemove = preFilterSize - targetSize;
+        
+        // 使用快照方式收集要删除的key，避免迭代期间的并发修改问题
+        List<String> keysToRemove = new ArrayList<>(toRemove);
+        int count = 0;
+        for (String key : preFilter.keySet()) {
+            if (count >= toRemove) {
+                break;
+            }
+            keysToRemove.add(key);
+            count++;
+        }
+        
+        // 批量删除：使用remove()方法，即使key在删除期间被重新添加，也会被删除
+        int removed = 0;
+        for (String key : keysToRemove) {
+            // remove()是原子操作，线程安全
+            // 即使recordAccess在删除期间执行compute，也不会影响删除操作
+            if (preFilter.remove(key) != null) {
                 removed++;
             }
-            return removed;
         }
-        return 0;
+        
+        return removed;
     }
 
     /**
