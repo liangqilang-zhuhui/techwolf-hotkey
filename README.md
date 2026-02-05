@@ -6,8 +6,8 @@
 
 ## 功能特性
 
-- ✅ **自动热Key检测**：基于滑动窗口算法，自动检测访问频率高的Redis key（QPS >= 1000，默认阈值）
-- ✅ **本地缓存**：使用Caffeine实现高性能本地缓存，默认60秒过期
+- ✅ **自动热Key检测**：基于滑动窗口算法，自动检测访问频率高的Redis key（QPS >= 500，默认阈值）
+- ✅ **本地缓存**：使用Caffeine实现高性能本地缓存，默认60分钟过期
 - ✅ **自动刷新**：定时刷新热Key数据，保证数据新鲜度（默认10秒刷新一次）
 - ✅ **自动淘汰**：支持时间过期、容量限制等多种淘汰策略，自动移除不再热门的key
 - ✅ **智能采样**：支持低频率key的采样机制，降低内存占用
@@ -39,12 +39,12 @@ hotkey:
   enabled: true                          # 是否启用热Key检测，默认true
   detection:
     top-n: 20                             # Top N数量，默认20
-    hot-key-qps-threshold: 1000.0          # 热Key QPS阈值（次/秒），默认1000.0
-    warm-key-qps-threshold: 500.0         # 温Key QPS阈值（次/秒），默认500.0
+    hot-key-qps-threshold: 500            # 热Key QPS阈值（次/秒），默认500
+    warm-key-qps-threshold: 200           # 温Key QPS阈值（次/秒），默认200
     promotion-interval: 5000               # 晋升间隔（毫秒），默认5000（5秒）
   storage:
-    maximum-size: 200                      # 最大缓存数量，默认200
-    expire-after-write: 60                # 写入后过期时间（秒），默认60秒
+    maximum-size: 2000                    # 最大缓存数量，默认2000（TOP_N * 100）
+    expire-after-write: 60                # 写入后过期时间（分钟），默认60分钟
   recorder:
     max-capacity: 100000                   # 访问记录最大容量，默认100000
     window-size: 10                       # 统计窗口大小（秒），用于计算QPS，默认10秒
@@ -54,6 +54,18 @@ hotkey:
   monitor:
     enabled: true                          # 是否启用监控，默认true
     interval: 60000                        # 监控输出间隔（毫秒），默认60000（60秒）
+```
+
+精简版
+```
+hotkey:
+  enabled: true                          # 是否启用热Key检测，默认true
+  detection:
+    top-n: 20                             # Top N数量，默认20
+    hot-key-qps-threshold: 50            # 热Key QPS阈值（次/秒），默认500
+    warm-key-qps-threshold: 10           # 温Key QPS阈值（次/秒），默认200
+  recorder:
+    max-capacity: 500000                 # 访问记录最大容量，默认100000
 ```
 
 ### 3. 使用方式
@@ -86,7 +98,7 @@ public String get(String key) {
 // 创建配置
 HotKeyConfig config = new HotKeyConfig();
 config.setEnabled(true);
-config.getDetection().setHotKeyQpsThreshold(1000.0);
+config.getDetection().setHotKeyQpsThreshold(500);  // 注意：参数类型为 int
 config.getDetection().setTopN(20);
 // ... 其他配置
 
@@ -106,18 +118,18 @@ client.shutdown();
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| top-n | int | 20 | Top N数量，默认20 |
-| hot-key-qps-threshold | double | 1000.0 | 热Key QPS阈值（次/秒），只有QPS >= 1000的key才能成为热Key |
-| warm-key-qps-threshold | double | 500.0 | 温Key QPS阈值（次/秒），冷key需要QPS >= 500才能升级到温key |
-| promotion-interval | long | 5000 | 晋升间隔（毫秒），默认5000（5秒） |
+| top-n | int | 20 | Top N数量，最多保留的热Key数量 |
+| hot-key-qps-threshold | int | 500 | 热Key QPS阈值（次/秒），只有QPS >= 500的key才能成为热Key |
+| warm-key-qps-threshold | int | 200 | 温Key QPS阈值（次/秒），冷key需要QPS >= 200才能升级到温key |
+| promotion-interval | long | 5000 | 晋升间隔（毫秒），每5秒执行一次热Key晋升检测 |
 
 ### 存储配置（storage）
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | enabled | boolean | true | 是否启用本地缓存 |
-| maximum-size | long | 200 | 最大缓存数量 |
-| expire-after-write | int | 60 | 写入后过期时间（秒） |
+| maximum-size | long | 2000 | 最大缓存数量（TOP_N * 100） |
+| expire-after-write | int | 60 | 写入后过期时间（分钟），默认60分钟 |
 | record-stats | boolean | true | 是否记录统计信息 |
 
 ### 访问记录配置（recorder）
@@ -240,43 +252,6 @@ String json = mBean.getMonitorInfoJson();
 - 读操作占主导，写操作（扣减库存）相对较少
 - 对响应时间要求极高，需要毫秒级响应
 
-**解决方案**：
-```java
-@Service
-public class SeckillService {
-    @Autowired
-    private IHotKeyClient hotKeyClient;
-    
-    @Autowired
-    private StringRedisTemplate redisTemplate;
-    
-    /**
-     * 获取商品库存（自动热Key缓存）
-     */
-    public Integer getStock(Long productId) {
-        String key = "stock:product:" + productId;
-        String stockStr = hotKeyClient.wrapGet(key, 
-            k -> redisTemplate.opsForValue().get(k));
-        return stockStr != null ? Integer.parseInt(stockStr) : 0;
-    }
-    
-    /**
-     * 扣减库存
-     */
-    public boolean decreaseStock(Long productId, Integer quantity) {
-        String key = "stock:product:" + productId;
-        // 先扣减Redis库存
-        Long result = redisTemplate.opsForValue().decrement(key, quantity);
-        if (result != null && result >= 0) {
-            // 如果是热Key，自动更新本地缓存
-            hotKeyClient.updateCache(key, String.valueOf(result));
-            return true;
-        }
-        return false;
-    }
-}
-```
-
 **效果**：
 - 商品库存信息自动缓存到本地，减少99%以上的Redis访问
 - 响应时间从Redis网络延迟（1-5ms）降低到本地内存访问（<0.1ms）
@@ -290,42 +265,6 @@ public class SeckillService {
 - 内容平台中，热门文章、视频等元数据访问量巨大
 - 同一商品/内容在短时间内被大量用户访问
 - 数据更新频率相对较低，适合缓存
-
-**解决方案**：
-```java
-@Service
-public class ProductService {
-    @Autowired
-    private IHotKeyClient hotKeyClient;
-    
-    @Autowired
-    private StringRedisTemplate redisTemplate;
-    
-    /**
-     * 获取商品详情（自动热Key缓存）
-     */
-    public ProductInfo getProductInfo(Long productId) {
-        String key = "product:info:" + productId;
-        String productJson = hotKeyClient.wrapGet(key, 
-            k -> redisTemplate.opsForValue().get(k));
-        
-        if (productJson != null) {
-            return JSON.parseObject(productJson, ProductInfo.class);
-        }
-        return null;
-    }
-    
-    /**
-     * 获取商品价格（自动热Key缓存）
-     */
-    public BigDecimal getProductPrice(Long productId) {
-        String key = "product:price:" + productId;
-        String priceStr = hotKeyClient.wrapGet(key, 
-            k -> redisTemplate.opsForValue().get(k));
-        return priceStr != null ? new BigDecimal(priceStr) : null;
-    }
-}
-```
 
 **效果**：
 - 热门商品信息自动缓存，命中率可达95%以上
@@ -341,46 +280,6 @@ public class ProductService {
 - 同一用户信息在短时间内被多次查询
 - 数据相对稳定，更新频率低
 
-**解决方案**：
-```java
-@Service
-public class UserService {
-    @Autowired
-    private IHotKeyClient hotKeyClient;
-    
-    @Autowired
-    private StringRedisTemplate redisTemplate;
-    
-    /**
-     * 获取用户信息（自动热Key缓存）
-     */
-    public UserInfo getUserInfo(Long userId) {
-        String key = "user:info:" + userId;
-        String userJson = hotKeyClient.wrapGet(key, 
-            k -> redisTemplate.opsForValue().get(k));
-        
-        if (userJson != null) {
-            return JSON.parseObject(userJson, UserInfo.class);
-        }
-        return null;
-    }
-    
-    /**
-     * 获取用户权限配置（自动热Key缓存）
-     */
-    public UserPermission getUserPermission(Long userId) {
-        String key = "user:permission:" + userId;
-        String permissionJson = hotKeyClient.wrapGet(key, 
-            k -> redisTemplate.opsForValue().get(k));
-        
-        if (permissionJson != null) {
-            return JSON.parseObject(permissionJson, UserPermission.class);
-        }
-        return null;
-    }
-}
-```
-
 **效果**：
 - 活跃用户信息自动缓存，减少Redis查询
 - 提升接口响应速度，改善用户体验
@@ -395,81 +294,11 @@ public class UserService {
 - 同一排行榜数据在短时间内被大量用户访问
 - 对数据实时性有一定要求，但可以接受短暂延迟
 
-**解决方案**：
-```java
-@Service
-public class RankingService {
-    @Autowired
-    private IHotKeyClient hotKeyClient;
-    
-    @Autowired
-    private StringRedisTemplate redisTemplate;
-    
-    /**
-     * 获取排行榜数据（自动热Key缓存）
-     * 自动刷新机制保证数据新鲜度（默认10秒刷新一次）
-     */
-    public List<RankingItem> getRanking(String rankingType) {
-        String key = "ranking:" + rankingType;
-        String rankingJson = hotKeyClient.wrapGet(key, 
-            k -> redisTemplate.opsForValue().get(k));
-        
-        if (rankingJson != null) {
-            return JSON.parseArray(rankingJson, RankingItem.class);
-        }
-        return Collections.emptyList();
-    }
-}
-```
-
 **效果**：
 - 排行榜数据自动缓存，减少Redis访问
 - 自动刷新机制保证数据新鲜度（默认10秒刷新）
 - 大幅提升查询性能，支持更高并发
 - 降低Redis压力，提升系统稳定性
-
-### 配置建议
-
-针对不同场景，可以调整以下配置参数：
-
-**秒杀/抢购场景**：
-```yaml
-hotkey:
-  detection:
-    hot-key-qps-threshold: 5000.0    # 提高阈值，只缓存最热门的商品
-    top-n: 30                         # 增加Top N数量，支持更多热门商品
-  storage:
-    maximum-size: 500                 # 增加缓存容量
-    expire-after-write: 30           # 缩短过期时间，保证数据新鲜度
-  refresh:
-    interval: 5000                   # 缩短刷新间隔，提高数据实时性
-```
-
-**热门商品/内容查询场景**：
-```yaml
-hotkey:
-  detection:
-    hot-key-qps-threshold: 1000.0    # 使用默认阈值
-    top-n: 50                         # 增加Top N数量
-  storage:
-    maximum-size: 1000                # 增加缓存容量
-    expire-after-write: 60           # 使用默认过期时间
-  refresh:
-    interval: 10000                   # 使用默认刷新间隔
-```
-
-**用户信息查询场景**：
-```yaml
-hotkey:
-  detection:
-    hot-key-qps-threshold: 500.0     # 降低阈值，缓存更多用户
-    top-n: 100                        # 增加Top N数量
-  storage:
-    maximum-size: 2000                # 增加缓存容量
-    expire-after-write: 120           # 延长过期时间，用户信息变化不频繁
-  refresh:
-    interval: 30000                   # 延长刷新间隔，用户信息更新不频繁
-```
 
 ## 工作原理
 
@@ -477,15 +306,15 @@ hotkey:
 
 1. **访问统计**：每次调用 `wrapGet` 方法时，异步记录访问统计（使用滑动窗口算法计算QPS）
 2. **热Key检测**：
-   - 每5秒执行一次热Key晋升：从满足QPS阈值（>= 1000）的key中，按QPS降序排序，取Top N个（默认20个）晋升为热Key
-   - 每60秒执行一次热Key降级：移除QPS低于阈值（< 1000）的key
+   - 每5秒执行一次热Key晋升：从满足QPS阈值（>= 500）的key中，按QPS降序排序，取Top N个（默认20个）晋升为热Key
+   - 每执行20次晋升任务执行1次降级任务：移除QPS低于阈值（< 500）的key
 3. **本地缓存**：
    - 当key被识别为热Key后，自动缓存到本地Caffeine缓存
    - 缓存命中时直接返回，无需访问Redis
    - 缓存未命中时从Redis获取，并更新本地缓存
 4. **自动刷新**：每10秒自动刷新一次热Key数据，保证数据新鲜度
 5. **自动淘汰**：
-   - 时间过期：缓存数据60秒后自动过期
+   - 时间过期：缓存数据60分钟后自动过期
    - 容量限制：超过最大容量时，按LRU策略淘汰
    - 降级移除：key不再热门时，自动从缓存中移除
 
@@ -562,7 +391,7 @@ System.out.println("命中率: " + info.getHotKeyHitRate());
 ## 注意事项
 
 1. **数据一致性**：
-   - 本地缓存的数据可能与Redis中的数据存在短暂不一致（最多60秒）
+   - 本地缓存的数据可能与Redis中的数据存在短暂不一致（最多60分钟）
    - 自动刷新机制每10秒刷新一次，可以缩短不一致时间窗口
    - 适合读多写少的场景，对数据一致性要求极高的场景请谨慎使用
 
@@ -603,7 +432,7 @@ System.out.println("命中率: " + info.getHotKeyHitRate());
 ### v1.0.0
 
 - ✅ 实现热Key检测机制（滑动窗口、TopN计算）
-- ✅ 实现本地Caffeine缓存（60秒过期，最大200个key）
+- ✅ 实现本地Caffeine缓存（60分钟过期，最大2000个key）
 - ✅ 实现自动刷新机制（每10秒刷新一次热Key数据）
 - ✅ 实现智能采样机制（降低低频率key的内存占用）
 - ✅ 实现自动淘汰机制（时间过期、容量限制、降级移除）

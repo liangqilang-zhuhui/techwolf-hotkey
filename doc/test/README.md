@@ -4,15 +4,54 @@
 
 本目录包含热Key功能的完整测试脚本，用于验证热Key检测功能的完整性、合理性和潜在bug。测试包括基础功能测试和长时间运行测试（OOM验证）。
 
-## 测试配置
+## 系统默认配置
 
-根据当前配置：
-- **热Key QPS阈值**: 30.0 (QPS >= 30 才能成为热Key)
-- **温Key QPS阈值**: 10.0 (QPS >= 10 才能成为温Key)
-- **访问记录最大容量**: 15 (最多记录15个key的访问统计)
-- **Top N限制**: 10 (最多保留10个热Key)
-- **刷新间隔**: 10秒
-- **降级间隔**: 60秒
+系统默认配置如下表所示，测试时可根据需要调整配置参数：
+
+### 主配置
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| enabled | boolean | true | 是否启用热Key检测 |
+
+### 检测配置（detection）
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| top-n | int | 20 | Top N数量，最多保留的热Key数量 |
+| hot-key-qps-threshold | int | 500 | 热Key QPS阈值（次/秒），只有QPS >= 500的key才能成为热Key |
+| warm-key-qps-threshold | int | 200 | 温Key QPS阈值（次/秒），冷key需要QPS >= 200才能升级到温key |
+| promotion-interval | long | 5000 | 晋升间隔（毫秒），每5秒执行一次热Key晋升检测 |
+
+### 存储配置（storage）
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| maximum-size | long | 2000 | 最大缓存数量（TOP_N * 100） |
+| expire-after-write | int | 60 | 写入后过期时间（分钟），默认60分钟 |
+
+### 访问记录配置（recorder）
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| max-capacity | int | 100000 | 访问记录最大容量，超限时自动清理低QPS的key |
+| window-size | int | 10 | 统计窗口大小（秒），用于计算QPS |
+| inactive-expire-time | int | 120 | 非活跃key过期时间（秒），超过此时间未访问的key会被清理 |
+
+### 刷新配置（refresh）
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| interval | long | 10000 | 刷新间隔（毫秒），默认10秒刷新一次热Key数据 |
+
+### 监控配置（monitor）
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| enabled | boolean | true | 是否启用监控 |
+| interval | long | 60000 | 监控输出间隔（毫秒），默认60秒输出一次 |
+
+**注意**：测试时建议降低 `hot-key-qps-threshold` 和 `warm-key-qps-threshold` 以便快速验证功能，例如设置为20和10。
 
 ## 快速开始
 
@@ -87,9 +126,9 @@ python3 hotkey_test.py --monitor
 #### 基础功能测试（16个测试用例）
 
 1. **基础功能测试**: 验证基本的set/get操作
-2. **热Key检测测试**: 高频访问触发热Key（QPS > 30）
-3. **温Key检测测试**: 中等频率访问触发温Key（10 <= QPS < 30）
-4. **容量限制测试**: 测试recorderMaxCapacity=15的限制
+2. **热Key检测测试**: 高频访问触发热Key（QPS >= 500，测试时可降低阈值）
+3. **温Key检测测试**: 中等频率访问触发温Key（200 <= QPS < 500，测试时可降低阈值）
+4. **容量限制测试**: 测试访问记录最大容量限制（默认100000）
 5. **并发访问测试**: 多线程并发访问测试
 6. **缓存命中率测试**: 验证热Key缓存命中率
 7. **边界情况测试**: 空值、特殊字符、Unicode、长值等
@@ -155,7 +194,7 @@ python3 hotkey_test.py --monitor
 ## 测试场景说明
 
 ### 场景1: 热Key检测
-- **目标**: 验证高频访问（QPS > 30）能正确触发热Key检测
+- **目标**: 验证高频访问（QPS >= 500，测试时可降低阈值）能正确触发热Key检测
 - **方法**: 在短时间内对同一个key进行大量访问
 - **验证点**: 
   - 访问统计是否正确
@@ -163,15 +202,15 @@ python3 hotkey_test.py --monitor
   - 缓存是否生效
 
 ### 场景2: 温Key检测
-- **目标**: 验证中等频率访问（10 <= QPS < 30）能正确触发温Key检测
-- **方法**: 控制访问频率在20 QPS左右
+- **目标**: 验证中等频率访问（200 <= QPS < 500，测试时可降低阈值）能正确触发温Key检测
+- **方法**: 控制访问频率在温Key阈值范围内
 - **验证点**: 
   - 温Key是否被正确识别
   - 不会误判为热Key
 
 ### 场景3: 容量限制
 - **目标**: 验证当访问记录超过最大容量时，系统能正确处理
-- **方法**: 创建超过15个不同的key并进行访问
+- **方法**: 创建超过最大容量（默认100000）的不同key并进行访问
 - **验证点**: 
   - 容量限制是否生效
   - 低QPS的key是否被正确清理
@@ -268,57 +307,13 @@ python3 hotkey_test.py --monitor
 
 测试脚本使用以下监控API来验证热Key状态和获取监控指标：
 
-### 1. 检查指定key是否为热Key
-**接口**：`GET /api/hotkey/monitor/check?key={key}`
-
-**示例**：
-```bash
-curl "http://localhost:8080/api/hotkey/monitor/check?key=test:hotkey:1"
-```
-
-**响应**：
-```json
-{
-  "enabled": true,
-  "key": "test:hotkey:1",
-  "isHotKey": true,
-  "hotKeyCount": 2
-}
-```
-
-### 2. 获取完整监控信息
-**接口**：`GET /api/hotkey/monitor/info`
-
-**示例**：
-```bash
-curl "http://localhost:8080/api/hotkey/monitor/info"
-```
-
-**响应**：包含所有监控指标，如热Key数量、命中率、QPS等
-
-### 3. 获取热Key列表
-**接口**：`GET /api/hotkey/monitor/hotkeys`
-
-**示例**：
-```bash
-curl "http://localhost:8080/api/hotkey/monitor/hotkeys"
-```
-
-### 4. 获取统计信息
-**接口**：`GET /api/hotkey/monitor/stats`
-
-**示例**：
-```bash
-curl "http://localhost:8080/api/hotkey/monitor/stats"
-```
-
-### 5. 手动刷新监控数据
-**接口**：`POST /api/hotkey/monitor/refresh`
-
-**示例**：
-```bash
-curl -X POST "http://localhost:8080/api/hotkey/monitor/refresh"
-```
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/hotkey/monitor/check?key={key}` | GET | 检查指定key是否为热Key |
+| `/api/hotkey/monitor/info` | GET | 获取完整监控信息（包含所有监控指标） |
+| `/api/hotkey/monitor/hotkeys` | GET | 获取热Key列表 |
+| `/api/hotkey/monitor/stats` | GET | 获取统计信息（QPS、命中率、流量占比等） |
+| `/api/hotkey/monitor/refresh` | POST | 手动刷新监控数据 |
 
 ## 预期结果
 
@@ -338,7 +333,7 @@ curl -X POST "http://localhost:8080/api/hotkey/monitor/refresh"
 **A**: 确保应用已启动并运行在8080端口，检查防火墙设置
 
 ### Q: 热Key检测测试失败
-**A**: 检查配置的QPS阈值，确保访问频率足够高。可以增加访问次数或减少等待时间
+**A**: 检查配置的QPS阈值（默认500），确保访问频率足够高。测试时可降低 `hot-key-qps-threshold` 到较小值（如20）以便快速验证功能
 
 ### Q: 缓存命中率低于预期
 **A**: 确保等待足够的时间让热Key晋升完成（至少6秒），然后再测试缓存命中率
@@ -354,25 +349,13 @@ curl -X POST "http://localhost:8080/api/hotkey/monitor/refresh"
 测试完成后，可以通过以下方式查看性能指标：
 
 ### 1. 通过监控API
-使用监控API实时查询：
-```bash
-# 获取完整监控信息
-curl "http://localhost:8080/api/hotkey/monitor/info"
-
-# 获取统计信息
-curl "http://localhost:8080/api/hotkey/monitor/stats"
-```
+使用监控API实时查询，详见"监控API说明"章节。
 
 ### 2. 通过测试脚本
-```bash
-# 监控系统状态
-python3 hotkey_test.py --monitor
-# 或
-./run_tests.sh --monitor
-```
+使用 `./run_tests.sh --monitor` 或 `python3 hotkey_test.py --monitor` 监控系统状态。
 
 ### 3. 通过应用日志
-查看应用日志中的监控输出，包含以下指标：
+查看应用日志中的监控输出（默认每60秒输出一次），包含以下指标：
 - 热Key数量
 - 缓存命中率
 - 访问记录模块数据量
@@ -383,13 +366,13 @@ python3 hotkey_test.py --monitor
 
 ### 系统保护机制
 
-1. **Top N限制**: 晋升时只保留Top N个热Key（默认10个）
-2. **降级机制**: 每分钟检查并降级低QPS的热Key
+1. **Top N限制**: 晋升时只保留Top N个热Key（默认20个）
+2. **降级机制**: 每执行20次晋升任务执行1次降级任务，检查并降级低QPS的热Key
 3. **容量限制**: 
-   - 本地缓存：最多200个（可配置）
+   - 本地缓存：最多2000个（可配置，默认TOP_N * 100）
    - 访问记录：最多100000个（可配置）
    - 自动清理过期和低QPS的key
-4. **自动过期**: Caffeine缓存1分钟自动过期
+4. **自动过期**: Caffeine缓存60分钟自动过期（可配置）
 
 ### 长时间测试验证
 

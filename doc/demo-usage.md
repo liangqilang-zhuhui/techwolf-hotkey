@@ -220,16 +220,16 @@ hotkey:
   enabled: true                          # 是否启用，默认true
   detection:
     top-n: 20                            # Top N数量，默认20
-    hot-key-qps-threshold: 20            # 热Key QPS阈值（次/秒），默认500
-    warm-key-qps-threshold: 10           # 温Key QPS阈值（次/秒），默认200
+    hot-key-qps-threshold: 20            # 热Key QPS阈值（次/秒），默认500（测试时降低到20）
+    warm-key-qps-threshold: 10           # 温Key QPS阈值（次/秒），默认200（测试时降低到10）
     promotion-interval: 5000             # 晋升间隔（毫秒），默认5000（5秒）
   storage:
-    maximum-size: 2000                   # 最大缓存数量，默认TOP_N * 100 = 2000
-    expire-after-write: 60               # 过期时间（分钟），默认60
+    maximum-size: 2000                   # 最大缓存数量，默认2000（TOP_N * 100）
+    expire-after-write: 60               # 过期时间（分钟），默认60分钟
   recorder:
     max-capacity: 100000                 # 访问记录最大容量，默认100000
-    window-size: 10                      # 统计窗口大小（秒），默认10
-    inactive-expire-time: 120            # 非活跃key过期时间（秒），默认120
+    window-size: 10                      # 统计窗口大小（秒），默认10秒
+    inactive-expire-time: 120            # 非活跃key过期时间（秒），默认120秒
   refresh:
     interval: 10000                      # 刷新间隔（毫秒），默认10000（10秒）
   monitor:
@@ -238,11 +238,31 @@ hotkey:
       enabled: true                      # 启用Prometheus指标，默认true
 ```
 
-**配置说明**：
-- `hot-key-qps-threshold`：访问频率达到此值的key才能成为热Key（测试时可降低到20）
+**配置参数说明**：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `enabled` | boolean | true | 是否启用热Key检测 |
+| `detection.top-n` | int | 20 | Top N数量，最多保留的热Key数量 |
+| `detection.hot-key-qps-threshold` | int | 500 | 热Key QPS阈值（次/秒），只有QPS >= 500的key才能成为热Key |
+| `detection.warm-key-qps-threshold` | int | 200 | 温Key QPS阈值（次/秒），冷key需要QPS >= 200才能升级到温key |
+| `detection.promotion-interval` | long | 5000 | 晋升间隔（毫秒），每5秒执行一次热Key晋升检测 |
+| `storage.maximum-size` | long | 2000 | 最大缓存数量（TOP_N * 100） |
+| `storage.expire-after-write` | int | 60 | 写入后过期时间（分钟），默认60分钟 |
+| `recorder.max-capacity` | int | 100000 | 访问记录最大容量，超限时自动清理低QPS的key |
+| `recorder.window-size` | int | 10 | 统计窗口大小（秒），用于计算QPS |
+| `recorder.inactive-expire-time` | int | 120 | 非活跃key过期时间（秒），超过此时间未访问的key会被清理 |
+| `refresh.interval` | long | 10000 | 刷新间隔（毫秒），默认10秒刷新一次热Key数据 |
+| `monitor.enabled` | boolean | true | 是否启用监控 |
+| `monitor.interval` | long | 60000 | 监控输出间隔（毫秒），默认60秒输出一次 |
+| `monitor.prometheus.enabled` | boolean | true | 是否启用Prometheus指标 |
+
+**重要说明**：
+- `hot-key-qps-threshold` 和 `warm-key-qps-threshold` 参数类型为 **int**，配置时使用整数即可
+- 测试时可以降低 `hot-key-qps-threshold` 和 `warm-key-qps-threshold` 以便快速验证功能（如设置为20和10）
 - `top-n`：同时满足QPS阈值和Top N排名的key才会晋升为热Key
 - `promotion-interval`：晋升任务执行间隔，每5秒检查一次
-- `demotion-interval`：降级任务由代码控制，每执行20次晋升任务执行1次降级任务
+- 降级任务由代码控制，每执行20次晋升任务执行1次降级任务
 - `expire-after-write`：缓存过期时间，单位是**分钟**（不是秒）
 - `refresh.interval`：数据刷新间隔，应小于`expire-after-write`，确保在过期前刷新
 
@@ -251,9 +271,10 @@ hotkey:
 1. **Redis必须运行**：确保Redis服务在 `127.0.0.1:6379` 运行
 2. **端口冲突**：如果8080端口被占用，修改 `application.yml` 中的 `server.port`
 3. **热Key阈值**：
-   - 默认QPS阈值是500，但demo中配置为20以便测试
+   - 默认热Key QPS阈值是500，温Key QPS阈值是200，但demo中配置为20和10以便测试
    - 需要同时满足QPS阈值和Top N排名才能成为热Key
-   - 测试时可以降低`hot-key-qps-threshold`到较小值（如20）
+   - 测试时可以降低`hot-key-qps-threshold`和`warm-key-qps-threshold`到较小值（如20和10）
+   - 注意：这些参数类型为 **int**，配置时使用整数即可
 4. **日志级别**：默认热Key相关日志是DEBUG级别，可以在配置文件中调整
 5. **缓存过期时间**：`expire-after-write`的单位是**分钟**，不是秒
 6. **Prometheus监控**：如果启用了Prometheus，可以通过 `/actuator/prometheus` 端点查看指标
@@ -271,7 +292,8 @@ hotkey:
 ### 3. 热Key未触发
 - 检查访问频率是否达到阈值（demo中配置为20 QPS，默认500 QPS）
 - 需要同时满足QPS阈值和Top N排名
-- 降低 `hot-key-qps-threshold` 进行测试（建议设置为20）
+- 降低 `hot-key-qps-threshold` 和 `warm-key-qps-threshold` 进行测试（建议设置为20和10）
+- 注意：这些参数类型为 **int**，配置时使用整数，不要使用小数（如使用 `20` 而不是 `20.0`）
 - 查看日志确认访问是否被记录
 - 使用监控API检查：`curl "http://localhost:8080/api/hotkey/monitor/stats"`
 
