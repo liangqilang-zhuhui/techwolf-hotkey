@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import cn.techwolf.datastar.hotkey.config.HotKeyConfig;
 import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
+import cn.techwolf.datastar.hotkey.recorder.RecorderStatistics;
 import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
 
 import java.text.DecimalFormat;
@@ -80,6 +81,26 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             log.debug("数据存储层大小: {}", info.getStorageSize());
             log.debug("访问记录模块数据量: {}", info.getRecorderSize());
             log.debug("访问记录模块内存大小(估算): {} bytes", info.getRecorderMemorySize());
+            // 输出详细统计信息
+            if (info.getRecorderStatistics() != null) {
+                RecorderStatistics stats = info.getRecorderStatistics();
+                log.debug("访问记录模块详细统计:");
+                if (stats.getPromotionQueue() != null) {
+                    RecorderStatistics.ComponentStatistics pq = stats.getPromotionQueue();
+                    log.debug("  PromotionQueue: 大小={}, 内存={} bytes, 平均key长度={}", 
+                            pq.getSize(), pq.getMemorySize(), pq.getAvgKeyLength());
+                }
+                if (stats.getRecentQps() != null) {
+                    RecorderStatistics.ComponentStatistics rq = stats.getRecentQps();
+                    log.debug("  RecentQps: 大小={}, 内存={} bytes, 平均key长度={}", 
+                            rq.getSize(), rq.getMemorySize(), rq.getAvgKeyLength());
+                }
+                int totalSize = (stats.getPromotionQueue() != null ? stats.getPromotionQueue().getSize() : 0) 
+                        + (stats.getRecentQps() != null ? stats.getRecentQps().getSize() : 0);
+                long totalMemorySize = (stats.getPromotionQueue() != null ? stats.getPromotionQueue().getMemorySize() : 0L) 
+                        + (stats.getRecentQps() != null ? stats.getRecentQps().getMemorySize() : 0L);
+                log.debug("  总计: 大小={}, 内存={} bytes", totalSize, totalMemorySize);
+            }
             log.debug("wrapGet总调用次数: {}", info.getTotalWrapGetCount());
             log.debug("wrapGet的QPS: {}", formatDouble(info.getWrapGetQps()));
             log.debug("每秒访问的不同key数量: {}", formatDouble(info.getKeysPerSecond()));
@@ -128,15 +149,26 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             info.setStorageSize(0);
         }
 
-        // 获取访问记录模块的数据量和大小
+        // 获取访问记录模块的详细统计信息
         if (accessRecorder != null) {
-            int recorderSize = accessRecorder.size();
-            info.setRecorderSize(recorderSize);
-            // 使用采样估算方法计算内存大小（基于平均key长度）
-            info.setRecorderMemorySize(accessRecorder.getMemorySize());
+            RecorderStatistics statistics = accessRecorder.getStatistics();
+            info.setRecorderStatistics(statistics);
+            // 从统计信息中计算总大小和总内存大小
+            if (statistics != null) {
+                int totalSize = (statistics.getPromotionQueue() != null ? statistics.getPromotionQueue().getSize() : 0) 
+                        + (statistics.getRecentQps() != null ? statistics.getRecentQps().getSize() : 0);
+                long totalMemorySize = (statistics.getPromotionQueue() != null ? statistics.getPromotionQueue().getMemorySize() : 0L) 
+                        + (statistics.getRecentQps() != null ? statistics.getRecentQps().getMemorySize() : 0L);
+                info.setRecorderSize(totalSize);
+                info.setRecorderMemorySize(totalMemorySize);
+            } else {
+                info.setRecorderSize(0);
+                info.setRecorderMemorySize(0L);
+            }
         } else {
             info.setRecorderSize(0);
             info.setRecorderMemorySize(0L);
+            info.setRecorderStatistics(null);
         }
 
         // 获取命中率统计数据

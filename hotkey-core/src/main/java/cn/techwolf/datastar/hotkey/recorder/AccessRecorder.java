@@ -31,37 +31,40 @@ public class AccessRecorder implements IAccessRecorder {
     private static final double CAPACITY_ALERT_RATIO = 0.9;
 
     /**
-     * 预筛选阈值最小值（防止阈值过低导致太多key进入accessStats）
+     * 待晋升队列阈值最小值（防止阈值过低导致太多key进入访问统计表）
      */
-    private static final int MIN_PRE_FILTER_THRESHOLD = 100;
+    private static final int MIN_PROMOTION_QUEUE_THRESHOLD = 100;
 
     /**
-     * 预筛选阈值：只有访问次数达到此值的key才进入accessStats
-     * 计算公式：preFilterThreshold = max(MIN_PRE_FILTER_THRESHOLD, (warmKeyThreshold * promotionInterval / 1000.0) )
+     * 待晋升队列阈值：只有访问次数达到此值的key才进入访问统计表
+     * 计算公式：promotionQueueThreshold = max(MIN_PROMOTION_QUEUE_THRESHOLD, (warmKeyThreshold * promotionInterval / 1000.0) )
      * 目的：过滤极低流量的key，减少内存占用
-     * 设计理念：在晋升间隔内，如果访问次数达到温Key阈值，则进入accessStats
+     * 设计理念：在晋升间隔内，如果访问次数达到温Key阈值，则进入访问统计表
      *         这样确保有足够流量潜力的key能进入晋升通道，同时过滤掉极低流量的key
      */
-    private final int preFilterThreshold;
+    private final int promotionQueueThreshold;
 
     /**
-     * 预筛选器：记录key的访问次数，只有达到阈值的才升级到accessStats
+     * 待晋升队列（key -> Integer）：存储待晋升key的访问次数
+     * 只有访问次数达到阈值的key才会升级到访问统计表（promotionQueue）
      * 使用轻量级的ConcurrentHashMap，只存储key和访问次数
      */
-    private final ConcurrentHashMap<String, Integer> preFilter;
+    private final ConcurrentHashMap<String, Integer> recentQpsTable;
+
 
     /**
-     * 访问统计信息（key -> AccessInfo）
-     * 只有通过预筛选的key才会存储在这里
+     * 访问统计表（key -> AccessInfo）：存储QPS统计信息
+     * 只有通过待晋升队列筛选的key才会存储在这里
+     * 存储完整的AccessInfo对象，包含QPS计算所需的详细信息
      */
-    private final ConcurrentHashMap<String, AccessInfo> accessStats;
+    private final ConcurrentHashMap<String, AccessInfo> promotionQueue;
 
     /**
      * 最大容量
      */
     private final int maxCapacity;
 
-    private final int maxpreFilterCapacity = 1000000;
+    private final int maxPromotionQueueCapacity = 1000000;
 
     /**
      * 配置参数
@@ -78,16 +81,21 @@ public class AccessRecorder implements IAccessRecorder {
      */
     private final AtomicBoolean cleanupInProgress = new AtomicBoolean(false);
 
+    /**
+     * 待晋升队列清理任务是否正在执行（避免并发执行多次清理）
+     */
+    private final AtomicBoolean promotionQueueCleanupInProgress = new AtomicBoolean(false);
+
     public AccessRecorder(HotKeyConfig config) {
         this.config = config;
         this.maxCapacity = config.getRecorder().getMaxCapacity();
-        this.accessStats = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240));
-        this.preFilter = new ConcurrentHashMap<>(Math.min(maxCapacity * 2, 20480)); // 预筛选器容量更大
+        this.recentQpsTable = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240));
+        this.promotionQueue = new ConcurrentHashMap<>(Math.min(maxCapacity * 2, 20480)); // 待晋升队列容量更大
         this.inactiveExpireTimeMs = config.getRecorder().getInactiveExpireTime() * 1000L;
         
         int calculatedThreshold = (int) ((config.getDetection().getWarmKeyQpsThreshold() * config.getDetection().getPromotionInterval() / 1000));
-        this.preFilterThreshold = Math.max(MIN_PRE_FILTER_THRESHOLD, calculatedThreshold);
-        log.info("预筛选阈值计算完成: 计算值={}, 最终阈值={}", calculatedThreshold, preFilterThreshold);
+        this.promotionQueueThreshold = Math.max(MIN_PROMOTION_QUEUE_THRESHOLD, calculatedThreshold);
+        log.info("待晋升队列阈值计算完成: 计算值={}, 最终阈值={}", calculatedThreshold, promotionQueueThreshold);
     }
 
     @Override
@@ -96,22 +104,21 @@ public class AccessRecorder implements IAccessRecorder {
             return;
         }
         try {
-            // 先检查是否已经在accessStats中
-            AccessInfo info = accessStats.get(key);
+            // 先检查是否已经在访问统计表（promotionQueue）中
+            AccessInfo info = promotionQueue.get(key);
             if (info != null) {
-                // 已经在accessStats中，直接记录访问
+                // 已经在访问统计表中，直接记录访问
                 info.recordAccess();
             } else {
-                // 不在accessStats中，先进入预筛选器
-                int count = preFilter.compute(key, (k, v) -> (v == null ? 0 : v) + 1);
-                
-                // 达到预筛选阈值，升级到accessStats
-                if (count >= preFilterThreshold) {
+                // 不在访问统计表中，先进入待晋升队列（recentQpsTable）
+                int count = recentQpsTable.compute(key, (k, v) -> (v == null ? 0 : v) + 1);
+                // 达到待晋升队列阈值，升级到访问统计表
+                if (count >= promotionQueueThreshold) {
                     // 使用computeIfAbsent，避免并发创建
-                    AccessInfo newInfo = accessStats.computeIfAbsent(
+                    AccessInfo newInfo = promotionQueue.computeIfAbsent(
                             key,
                             k -> {
-                                preFilter.remove(k); // 从预筛选器移除
+                                recentQpsTable.remove(k); // 从待晋升队列移除
                                 return new AccessInfo(k, config.getRecorder().getWindowSize());
                             }
                     );
@@ -120,9 +127,23 @@ public class AccessRecorder implements IAccessRecorder {
             }
             
             // 容量告警：如果容量超过90%，立即触发异步清理
-            int currentSize = accessStats.size();
-            if (currentSize >= maxCapacity * CAPACITY_ALERT_RATIO) {
-                triggerAsyncCleanup();
+            int recentQpsTableSize = recentQpsTable.size();
+            if (recentQpsTableSize >= maxCapacity * CAPACITY_ALERT_RATIO) {
+                triggerAsyncCleanupRecentQpsTable();
+            }
+            // 检查访问统计表（promotionQueue）的容量告警
+            int promotionQueueSize = promotionQueue.size();
+            if (promotionQueueSize >= maxCapacity * CAPACITY_ALERT_RATIO) {
+                // 异步触发清理，避免阻塞主流程
+                if (!promotionQueueCleanupInProgress.get()) {
+                    CompletableFuture.runAsync(() -> {
+                        try {
+                            cleanupPromotionQueue();
+                        } catch (Exception e) {
+                            log.warn("异步清理访问统计表（promotionQueue）任务执行失败", e);
+                        }
+                    });
+                }
             }
         } catch (Exception e) {
             log.debug("记录访问统计失败, key: {}", key, e);
@@ -130,17 +151,17 @@ public class AccessRecorder implements IAccessRecorder {
     }
 
     /**
-     * 异步触发清理任务
+     * 异步触发访问统计表清理任务
      */
-    private void triggerAsyncCleanup() {
+    private void triggerAsyncCleanupRecentQpsTable() {
         if (cleanupInProgress.get()) {
             return;
         }
         CompletableFuture.runAsync(() -> {
             try {
-                cleanupKeys();
+                cleanupRecentQpsTable();
             } catch (Exception e) {
-                log.warn("异步清理任务执行失败", e);
+                log.warn("异步清理访问统计表任务执行失败", e);
             }
         });
     }
@@ -148,7 +169,7 @@ public class AccessRecorder implements IAccessRecorder {
     @Override
     public Map<String, Double> getAccessStatistics() {
         Map<String, Double> stats = new HashMap<>();
-        accessStats.forEach((key, info) -> {
+        promotionQueue.forEach((key, info) -> {
             info.updateQps();
             stats.put(key, info.getQps());
         });
@@ -157,7 +178,7 @@ public class AccessRecorder implements IAccessRecorder {
     @Override
     public Set<String> getHotKeys() {
         double hotKeyThreshold = config.getDetection().getHotKeyQpsThreshold();
-        return accessStats.entrySet().stream()
+        return promotionQueue.entrySet().stream()
                 .filter(entry -> {
                     entry.getValue().updateQps();
                     double qps = entry.getValue().getQps();
@@ -168,38 +189,32 @@ public class AccessRecorder implements IAccessRecorder {
     }
 
     @Override
-    public int size() {
-        return accessStats.size();
+    public RecorderStatistics getStatistics() {
+        // 计算 PromotionQueue 统计信息
+        RecorderStatistics.ComponentStatistics promotionQueueStats = calculatePromotionQueueStatistics();
+        
+        // 计算 RecentQps 统计信息
+        RecorderStatistics.ComponentStatistics recentQpsStats = calculateRecentQpsStatistics();
+        
+        return new RecorderStatistics(promotionQueueStats, recentQpsStats);
     }
 
     /**
-     * 估算访问记录器的内存使用大小（字节）
-     * 返回 preFilter 和 accessStats 的总内存大小
+     * 计算 PromotionQueue 的统计信息
      * 
-     * @return 估算的内存大小（字节）
+     * @return PromotionQueue 统计信息
      */
-    @Override
-    public long getMemorySize() {
-        return getPreFilterMemorySize() + getAccessStatsMemorySize();
-    }
-
-    /**
-     * 估算预筛选器（preFilter）的内存使用大小（字节）
-     * 使用基于平均key长度的采样估算，性能优化：只采样前100个key
-     * 
-     * @return 估算的内存大小（字节）
-     */
-    public long getPreFilterMemorySize() {
-        int size = preFilter.size();
+    private RecorderStatistics.ComponentStatistics calculatePromotionQueueStatistics() {
+        int size = promotionQueue.size();
         if (size == 0) {
-            return 0L;
+            return new RecorderStatistics.ComponentStatistics(0, 0L, 0);
         }
         
         // 计算平均key长度（采样前100个）
         int sampleSize = Math.min(size, 100);
         int totalKeyLength = 0;
         int count = 0;
-        for (String key : preFilter.keySet()) {
+        for (String key : promotionQueue.keySet()) {
             if (count >= sampleSize) {
                 break;
             }
@@ -208,43 +223,27 @@ public class AccessRecorder implements IAccessRecorder {
         }
         int avgKeyLength = count > 0 ? totalKeyLength / count : 20; // 默认20字符
         
-        // 每个key的内存估算：
-        // - String对象：16(对象头) + 8(引用) + 4(hash) + 4(对齐) + 16(char[]对象头) + 4(长度) + 4(对齐) + 字符数*2
-        long stringSize = 16 + 8 + 4 + 4 + 16 + 4 + 4 + (avgKeyLength * 2L);
-        stringSize = (stringSize + 7) & ~7; // 对齐到8字节
+        long memorySize = calculatePromotionQueueMemorySize(size, avgKeyLength);
         
-        // Integer对象：16(对象头) + 4(value) + 4(对齐) = 24字节
-        long integerSize = 24L;
-        
-        // ConcurrentHashMap.Entry：约48字节
-        long entrySize = 48L;
-        
-        // 每个条目的总大小
-        long perEntrySize = stringSize + integerSize + entrySize;
-        
-        // ConcurrentHashMap基础开销 + 数组开销
-        long baseSize = 48L + (size * 2 * 8L); // 假设负载因子0.5
-        
-        return baseSize + (size * perEntrySize);
+        return new RecorderStatistics.ComponentStatistics(size, memorySize, avgKeyLength);
     }
 
     /**
-     * 估算访问统计（accessStats）的内存使用大小（字节）
-     * 使用基于平均key长度的采样估算，性能优化：只采样前100个key
+     * 计算 RecentQps 的统计信息
      * 
-     * @return 估算的内存大小（字节）
+     * @return RecentQps 统计信息
      */
-    public long getAccessStatsMemorySize() {
-        int size = accessStats.size();
+    private RecorderStatistics.ComponentStatistics calculateRecentQpsStatistics() {
+        int size = recentQpsTable.size();
         if (size == 0) {
-            return 0L;
+            return new RecorderStatistics.ComponentStatistics(0, 0L, 0);
         }
         
         // 计算平均key长度（采样前100个）
         int sampleSize = Math.min(size, 100);
         int totalKeyLength = 0;
         int count = 0;
-        for (String key : accessStats.keySet()) {
+        for (String key : recentQpsTable.keySet()) {
             if (count >= sampleSize) {
                 break;
             }
@@ -252,6 +251,24 @@ public class AccessRecorder implements IAccessRecorder {
             count++;
         }
         int avgKeyLength = count > 0 ? totalKeyLength / count : 20; // 默认20字符
+        
+        long memorySize = calculateRecentQpsTableMemorySize(size, avgKeyLength);
+        
+        return new RecorderStatistics.ComponentStatistics(size, memorySize, avgKeyLength);
+    }
+    
+    /**
+     * 计算 PromotionQueue 的内存大小（内部方法，复用计算逻辑）
+     * PromotionQueue 存储的是 ConcurrentHashMap<String, AccessInfo>
+     * 
+     * @param size 队列大小
+     * @param avgKeyLength 平均key长度
+     * @return 估算的内存大小（字节）
+     */
+    private long calculatePromotionQueueMemorySize(int size, int avgKeyLength) {
+        if (size == 0) {
+            return 0L;
+        }
         
         // 每个key的内存估算：
         // - String对象：16(对象头) + 8(引用) + 4(hash) + 4(对齐) + 16(char[]对象头) + 4(长度) + 4(对齐) + 字符数*2
@@ -276,19 +293,53 @@ public class AccessRecorder implements IAccessRecorder {
         return baseSize + (size * perEntrySize);
     }
 
+    /**
+     * 计算 RecentQps 的内存大小（内部方法）
+     * RecentQps 存储的是 ConcurrentHashMap<String, Integer>
+     * 
+     * @param size 表大小
+     * @param avgKeyLength 平均key长度
+     * @return 估算的内存大小（字节）
+     */
+    private long calculateRecentQpsTableMemorySize(int size, int avgKeyLength) {
+        if (size == 0) {
+            return 0L;
+        }
+        
+        // 每个key的内存估算：
+        // - String对象：16(对象头) + 8(引用) + 4(hash) + 4(对齐) + 16(char[]对象头) + 4(长度) + 4(对齐) + 字符数*2
+        long stringSize = 16 + 8 + 4 + 4 + 16 + 4 + 4 + (avgKeyLength * 2L);
+        stringSize = (stringSize + 7) & ~7; // 对齐到8字节
+        
+        // Integer对象：16(对象头) + 4(value) + 4(对齐) = 24字节
+        long integerSize = 24L;
+        
+        // ConcurrentHashMap.Entry：约48字节
+        long entrySize = 48L;
+        
+        // 每个条目的总大小
+        long perEntrySize = stringSize + integerSize + entrySize;
+        
+        // ConcurrentHashMap基础开销 + 数组开销
+        long baseSize = 48L + (size * 2 * 8L); // 假设负载因子0.5
+        
+        return baseSize + (size * perEntrySize);
+    }
+
 
     /**
-     * 清理过期和低QPS的key（默认异步执行）
+     * 清理访问统计表（recentQpsTable）
+     * 在降级任务执行完后调用，清理访问统计表
      * 外部调用此方法时，会异步执行清理任务，不阻塞调用线程
      */
     @Override
-    public void cleanupKeys() {
+    public void cleanupRecentQpsTable() {
         // 如果已有清理任务在执行，跳过本次触发（避免并发执行）
         if (!cleanupInProgress.compareAndSet(false, true)) {
             return;
         }
         try {
-            cleanupKeysInternal();
+            cleanupRecentQpsTableInternal();
         } finally {
             // 清理完成，重置标志
             cleanupInProgress.set(false);
@@ -296,41 +347,34 @@ public class AccessRecorder implements IAccessRecorder {
     }
 
     /**
-     * 清理过期和低QPS的key（实际执行清理逻辑）
-     * 包含三种触发机制：
+     * 清理访问统计表（promotionQueue）的实际执行逻辑
+     * 包含两种触发机制：
      * 1. 时间触发：清理超过指定时间未访问的非活跃key
-     * 2. 预筛选器清理：清理预筛选器中的过期key
-     * 3. 容量触发：当容量超限时，按QPS排序，移除QPS最低的key
+     * 2. 容量触发：当容量超限时，按QPS排序，移除QPS最低的key
      * 
      * 保留热Key和温Key，优先清理冷Key
      * 清理策略：保留80%的容量，清理20%
      */
-    private void cleanupKeysInternal() {
+    private void cleanupPromotionQueueInternal() {
         long startTime = System.currentTimeMillis();
-        int initialSize = accessStats.size();
-        int preFilterinitialSize = preFilter.size();
+        int initialSize = promotionQueue.size();
         try {
             // 第一部分：时间触发 - 清理过期key
-            int expiredCount = cleanupExpiredKeys();
-            
-            // 第二部分：清理预筛选器中的过期key（避免内存泄漏）
-            int preFilterCleaned = cleanupPreFilter();
-            
-            // 第三部分：容量触发 - 清理低QPS key
-            int currentSize = accessStats.size();
+            int expiredCount = cleanupPromotionQueueByExpiredKeys();
+            // 第二部分：容量触发 - 清理低QPS key
+            int currentSize = promotionQueue.size();
             int lowQpsCount = 0;
             if (currentSize >= maxCapacity) {
-                lowQpsCount = cleanupLowQpsKeysSimple(currentSize);
+                lowQpsCount = cleanupPromotionQueueByLowQpsKeys(currentSize);
             }
-            
             // 记录清理结果
-            if (expiredCount > 0 || preFilterCleaned > 0 || lowQpsCount > 0) {
+            if (expiredCount > 0 || lowQpsCount > 0) {
                 long cost = System.currentTimeMillis() - startTime;
-                log.info("清理key完成, 过期清理: {}, 预筛选器清理前: {}, 预筛选器已清理: {}, 低QPS清理: {}, 访问记录清理前容量: {}, 访问记录清理后容量: {}, 耗时: {}ms",
-                        expiredCount, preFilterinitialSize, preFilterCleaned, lowQpsCount, initialSize, accessStats.size(), cost);
+                log.info("清理promotionQueue完成, 过期清理: {}, 低QPS清理: {}, 清理前容量: {}, 清理后容量: {}, 耗时: {}ms",
+                        expiredCount, lowQpsCount, initialSize, promotionQueue.size(), cost);
             }
         } catch (Exception e) {
-            log.error("清理key失败", e);
+            log.error("清理访问统计表失败", e);
         }
     }
 
@@ -339,13 +383,12 @@ public class AccessRecorder implements IAccessRecorder {
      * 
      * @return 清理的key数量
      */
-    private int cleanupExpiredKeys() {
+    private int cleanupPromotionQueueByExpiredKeys() {
         long currentTime = System.currentTimeMillis();
         long expireThreshold = currentTime - inactiveExpireTimeMs;
-        
         // 收集需要过期的key
         List<String> expiredKeys = new ArrayList<>();
-        for (Map.Entry<String, AccessInfo> entry : accessStats.entrySet()) {
+        for (Map.Entry<String, AccessInfo> entry : promotionQueue.entrySet()) {
             AccessInfo info = entry.getValue();
             // 如果最后访问时间早于过期阈值，标记为需要移除
             if (info.getLastAccessTime() < expireThreshold) {
@@ -355,7 +398,7 @@ public class AccessRecorder implements IAccessRecorder {
         // 移除过期的key
         int removedCount = 0;
         for (String key : expiredKeys) {
-            if (accessStats.remove(key) != null) {
+            if (promotionQueue.remove(key) != null) {
                 removedCount++;
             }
         }
@@ -363,44 +406,65 @@ public class AccessRecorder implements IAccessRecorder {
     }
 
     /**
-     * 清理预筛选器：使用快照方式收集key，然后批量删除（线程安全）
-     * 清理到目标容量（保留80%），避免迭代期间的并发修改问题
+     * 清理待晋升队列（promotionQueue）
+     * 在晋升任务执行完后调用，清理待晋升队列
+     * 清理策略：保留80%的容量，清理20%
+     * 用于清理promotionQueue中超过容量的key，避免内存泄漏
      * 
-     * @return 清理的key数量
+     * 注意：此方法线程安全，支持并发调用
      */
-    private int cleanupPreFilter() {
-        int preFilterSize = preFilter.size();
-        int targetSize = (int) (maxpreFilterCapacity * CAPACITY_RETAIN_RATIO);
-        
-        // 如果预筛选器大小未超过目标容量，无需清理
-        if (preFilterSize <= targetSize) {
-            return 0;
+    public void cleanupPromotionQueue() {
+        // 如果已有清理任务在执行，跳过本次触发（避免并发执行）
+        if (!promotionQueueCleanupInProgress.compareAndSet(false, true)) {
+            return;
         }
-        
-        int toRemove = preFilterSize - targetSize;
-        
+        try {
+            cleanupPromotionQueueInternal();
+        } finally {
+            // 清理完成，重置标志
+            promotionQueueCleanupInProgress.set(false);
+        }
+    }
+
+    /**
+     * 清理待晋升队列（recentQpsTable）的实际执行逻辑
+     * 使用快照方式收集key，然后批量删除（线程安全）
+     * 清理到目标容量（保留80%），避免迭代期间的并发修改问题
+     */
+    private void cleanupRecentQpsTableInternal() {
+        long startTime = System.currentTimeMillis();
+        int recentQpsTableSize = recentQpsTable.size();
+        int targetSize = (int) (maxPromotionQueueCapacity * CAPACITY_RETAIN_RATIO);
+        // 如果待晋升队列大小未超过目标容量，无需清理
+        if (recentQpsTableSize <= targetSize) {
+            return;
+        }
+        int toRemove = recentQpsTableSize - targetSize;
         // 使用快照方式收集要删除的key，避免迭代期间的并发修改问题
         List<String> keysToRemove = new ArrayList<>(toRemove);
         int count = 0;
-        for (String key : preFilter.keySet()) {
+        for (String key : recentQpsTable.keySet()) {
             if (count >= toRemove) {
                 break;
             }
             keysToRemove.add(key);
             count++;
         }
-        
         // 批量删除：使用remove()方法，即使key在删除期间被重新添加，也会被删除
         int removed = 0;
         for (String key : keysToRemove) {
             // remove()是原子操作，线程安全
             // 即使recordAccess在删除期间执行compute，也不会影响删除操作
-            if (preFilter.remove(key) != null) {
+            if (recentQpsTable.remove(key) != null) {
                 removed++;
             }
         }
-        
-        return removed;
+        // 记录清理结果
+        if (removed > 0) {
+            long cost = System.currentTimeMillis() - startTime;
+            log.info("清理recentQpsTable完成, 清理前容量: {}, 清理后容量: {}, 清理数量: {}, 耗时: {}ms",
+                    recentQpsTableSize, recentQpsTable.size(), removed, cost);
+        }
     }
 
     /**
@@ -410,21 +474,18 @@ public class AccessRecorder implements IAccessRecorder {
      * @param currentSize 当前容量
      * @return 清理的key数量
      */
-    private int cleanupLowQpsKeysSimple(int currentSize) {
+    private int cleanupPromotionQueueByLowQpsKeys(int currentSize) {
         int toRemove = calculateKeysToRemove(currentSize);
         if (toRemove <= 0) {
             return 0;
         }
-        
         double warmKeyThreshold = config.getDetection().getWarmKeyQpsThreshold();
-        
         // 收集所有冷Key（QPS < warmKeyThreshold）及其QPS
         List<Map.Entry<String, Double>> coldKeys = new ArrayList<>();
-        for (Map.Entry<String, AccessInfo> entry : accessStats.entrySet()) {
+        for (Map.Entry<String, AccessInfo> entry : promotionQueue.entrySet()) {
             AccessInfo info = entry.getValue();
             info.updateQps();
             double qps = info.getQps();
-            
             // 只收集冷Key
             if (qps < warmKeyThreshold) {
                 coldKeys.add(new AbstractMap.SimpleEntry<>(entry.getKey(), qps));
@@ -435,7 +496,7 @@ public class AccessRecorder implements IAccessRecorder {
         if (coldKeys.size() < toRemove) {
             // 收集所有key的QPS
             List<Map.Entry<String, Double>> allKeys = new ArrayList<>();
-            for (Map.Entry<String, AccessInfo> entry : accessStats.entrySet()) {
+            for (Map.Entry<String, AccessInfo> entry : promotionQueue.entrySet()) {
                 AccessInfo info = entry.getValue();
                 info.updateQps();
                 allKeys.add(new AbstractMap.SimpleEntry<>(entry.getKey(), info.getQps()));
@@ -454,11 +515,10 @@ public class AccessRecorder implements IAccessRecorder {
         // 移除收集到的key
         int removedCount = 0;
         for (Map.Entry<String, Double> entry : coldKeys) {
-            if (accessStats.remove(entry.getKey()) != null) {
+            if (promotionQueue.remove(entry.getKey()) != null) {
                 removedCount++;
             }
         }
-        
         return removedCount;
     }
 

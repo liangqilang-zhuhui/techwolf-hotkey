@@ -14,8 +14,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
-import static java.lang.Thread.sleep;
-
 /**
  * 定时任务管理器实现
  * 职责：统一管理所有定时任务的启动、停止和资源释放
@@ -158,6 +156,8 @@ public class SchedulerManager implements IScheduler {
         if (newHotKeys != null && !newHotKeys.isEmpty()) {
             hotKeyManager.promoteHotKeys(newHotKeys);
         }
+        // 4. 清理RecentQpsTable
+        accessRecorder.cleanupRecentQpsTable();
     }
 
     /**
@@ -172,8 +172,8 @@ public class SchedulerManager implements IScheduler {
         if (removedKeys != null && !removedKeys.isEmpty()) {
             hotKeyManager.demoteHotKeys(removedKeys);
         }
-        // 4. 清理过期和低QPS的访问记录（异步执行）
-        accessRecorder.cleanupKeys();
+        // 4. 清理访问统计表（recentQpsTable）（异步执行）
+        accessRecorder.cleanupPromotionQueue();
     }
 
     @Override

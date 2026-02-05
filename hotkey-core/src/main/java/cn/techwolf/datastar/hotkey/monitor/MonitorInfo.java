@@ -1,5 +1,7 @@
 package cn.techwolf.datastar.hotkey.monitor;
 
+import cn.techwolf.datastar.hotkey.recorder.RecorderStatistics;
+
 import java.io.Serializable;
 import java.util.Set;
 
@@ -29,14 +31,20 @@ public class MonitorInfo implements Serializable {
     private long storageSize;
 
     /**
-     * 访问记录模块的数据量
+     * 访问记录模块的总数据量（PromotionQueue + RecentQps）
      */
     private int recorderSize;
 
     /**
-     * 访问记录模块的内存大小（估算，单位：字节）
+     * 访问记录模块的总内存大小（PromotionQueue + RecentQps，单位：字节）
      */
     private long recorderMemorySize;
+
+    /**
+     * 访问记录模块的详细统计信息
+     * 包含 PromotionQueue 和 RecentQps 的大小、内存使用情况等统计指标
+     */
+    private RecorderStatistics recorderStatistics;
 
     /**
      * 缓存数据更新器注册表的数据量
@@ -141,6 +149,14 @@ public class MonitorInfo implements Serializable {
         this.recorderMemorySize = recorderMemorySize;
     }
 
+    public RecorderStatistics getRecorderStatistics() {
+        return recorderStatistics;
+    }
+
+    public void setRecorderStatistics(RecorderStatistics recorderStatistics) {
+        this.recorderStatistics = recorderStatistics;
+    }
+
     public long getTotalWrapGetCount() {
         return totalWrapGetCount;
     }
@@ -236,6 +252,7 @@ public class MonitorInfo implements Serializable {
                 ", storageSize=" + storageSize +
                 ", recorderSize=" + recorderSize +
                 ", recorderMemorySize=" + recorderMemorySize +
+                ", recorderStatistics=" + recorderStatistics +
                 ", updaterSize=" + updaterSize +
                 ", totalWrapGetCount=" + totalWrapGetCount +
                 ", wrapGetQps=" + wrapGetQps +

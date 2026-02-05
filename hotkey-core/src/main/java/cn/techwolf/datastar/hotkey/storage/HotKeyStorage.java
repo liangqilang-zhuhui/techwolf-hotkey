@@ -17,7 +17,11 @@ import java.util.function.Function;
 
 /**
  * 热Key数据存储实现（模块二）
- * 职责：只存储热key的value，采用local cache，1分钟过期机制
+ * 职责：
+ * 1. 存储热key的value，采用local cache
+ * 2. 管理数据获取回调函数注册表
+ * 3. 定时刷新热Key数据，保证数据新鲜度
+ * 4. 过期时间可配置（默认60分钟）
  *
  * @author techwolf
  * @date 2024
@@ -57,9 +61,8 @@ public class HotKeyStorage implements IHotKeyStorage {
                 refreshInterval,
                 TimeUnit.MILLISECONDS
         );
-        log.info("热Key数据存储初始化完成, 最大容量: {}, 过期时间: {}分钟 (配置值: {}秒)",
+        log.info("热Key数据存储初始化完成, 最大容量: {}, 过期时间: {}分钟",
                 storageConfig.getMaximumSize(),
-                storageConfig.getExpireAfterWrite(),
                 storageConfig.getExpireAfterWrite());
     }
 
@@ -161,6 +164,12 @@ public class HotKeyStorage implements IHotKeyStorage {
         }
     }
 
+    /**
+     * 只保留指定key集合，删除其他所有key
+     * 会同时清理缓存（cache）和注册表（registryUpdateKeys）中的key
+     *
+     * @param keysToRetain 需要保留的key集合
+     */
     @Override
     public void retainAll(Set<String> keysToRetain) {
         if (keysToRetain == null) {

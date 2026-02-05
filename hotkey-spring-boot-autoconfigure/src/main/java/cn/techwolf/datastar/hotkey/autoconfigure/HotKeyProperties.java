@@ -55,8 +55,8 @@ public class HotKeyProperties {
     @Data
     public static class Detection {
         private int topN = HotKeyConfigDefaults.Detection.TOP_N;
-        private double hotKeyQpsThreshold = HotKeyConfigDefaults.Detection.HOT_KEY_QPS_THRESHOLD;
-        private double warmKeyQpsThreshold = HotKeyConfigDefaults.Detection.WARM_KEY_QPS_THRESHOLD;
+        private int hotKeyQpsThreshold = HotKeyConfigDefaults.Detection.HOT_KEY_QPS_THRESHOLD;
+        private int warmKeyQpsThreshold = HotKeyConfigDefaults.Detection.WARM_KEY_QPS_THRESHOLD;
         private long promotionInterval = HotKeyConfigDefaults.Detection.PROMOTION_INTERVAL;
     }
 
