@@ -89,8 +89,8 @@ public class AccessRecorder implements IAccessRecorder {
     public AccessRecorder(HotKeyConfig config) {
         this.config = config;
         this.maxCapacity = config.getRecorder().getMaxCapacity();
-        this.recentQpsTable = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240));
-        this.promotionQueue = new ConcurrentHashMap<>(Math.min(maxCapacity * 2, 20480)); // 待晋升队列容量更大
+        this.recentQpsTable = new ConcurrentHashMap<>(Math.min(maxCapacity* 2, 20480));
+        this.promotionQueue = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240)); // 待晋升队列容量更大
         this.inactiveExpireTimeMs = config.getRecorder().getInactiveExpireTime() * 1000L;
         
         int calculatedThreshold = (int) ((config.getDetection().getWarmKeyQpsThreshold() * config.getDetection().getPromotionInterval() / 1000));
