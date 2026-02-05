@@ -92,7 +92,6 @@ public class AccessRecorder implements IAccessRecorder {
         this.recentQpsTable = new ConcurrentHashMap<>(Math.min(maxCapacity* 2, 20480));
         this.promotionQueue = new ConcurrentHashMap<>(Math.min(maxCapacity, 10240)); // 待晋升队列容量更大
         this.inactiveExpireTimeMs = config.getRecorder().getInactiveExpireTime() * 1000L;
-        
         int calculatedThreshold = (int) ((config.getDetection().getWarmKeyQpsThreshold() * config.getDetection().getPromotionInterval() / 1000));
         this.promotionQueueThreshold = Math.max(MIN_PROMOTION_QUEUE_THRESHOLD, calculatedThreshold);
         log.info("待晋升队列阈值计算完成: 计算值={}, 最终阈值={}", calculatedThreshold, promotionQueueThreshold);
@@ -125,45 +124,9 @@ public class AccessRecorder implements IAccessRecorder {
                     newInfo.recordAccess();
                 }
             }
-            
-            // 容量告警：如果容量超过90%，立即触发异步清理
-            int recentQpsTableSize = recentQpsTable.size();
-            if (recentQpsTableSize >= maxCapacity * CAPACITY_ALERT_RATIO) {
-                triggerAsyncCleanupRecentQpsTable();
-            }
-            // 检查访问统计表（promotionQueue）的容量告警
-            int promotionQueueSize = promotionQueue.size();
-            if (promotionQueueSize >= maxCapacity * CAPACITY_ALERT_RATIO) {
-                // 异步触发清理，避免阻塞主流程
-                if (!promotionQueueCleanupInProgress.get()) {
-                    CompletableFuture.runAsync(() -> {
-                        try {
-                            cleanupPromotionQueue();
-                        } catch (Exception e) {
-                            log.warn("异步清理访问统计表（promotionQueue）任务执行失败", e);
-                        }
-                    });
-                }
-            }
         } catch (Exception e) {
             log.debug("记录访问统计失败, key: {}", key, e);
         }
-    }
-
-    /**
-     * 异步触发访问统计表清理任务
-     */
-    private void triggerAsyncCleanupRecentQpsTable() {
-        if (cleanupInProgress.get()) {
-            return;
-        }
-        CompletableFuture.runAsync(() -> {
-            try {
-                cleanupRecentQpsTable();
-            } catch (Exception e) {
-                log.warn("异步清理访问统计表任务执行失败", e);
-            }
-        });
     }
 
     @Override
