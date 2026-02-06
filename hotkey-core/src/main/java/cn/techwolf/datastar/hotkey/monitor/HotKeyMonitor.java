@@ -75,43 +75,43 @@ public class HotKeyMonitor implements IHotKeyMonitor {
             MonitorInfo info = getMonitorInfo();
 
             // 输出监控日志
-            log.debug("========== 热Key监控统计 ==========");
-            log.debug("热Key数量: {}", info.getHotKeyCount());
-            log.debug("热Key列表: {}", info.getHotKeys());
-            log.debug("数据存储层大小: {}", info.getStorageSize());
-            log.debug("访问记录模块数据量: {}", info.getRecorderSize());
-            log.debug("访问记录模块内存大小(估算): {} bytes", info.getRecorderMemorySize());
+            log.info("========== 热Key监控统计 ==========");
+            log.info("热Key数量: {}", info.getHotKeyCount());
+            log.info("热Key列表: {}", info.getHotKeys());
+            log.info("数据存储层大小: {}", info.getStorageSize());
+            log.info("访问记录模块数据量: {}", info.getRecorderSize());
+            log.info("访问记录模块内存大小(估算): {} bytes", info.getRecorderMemorySize());
             // 输出详细统计信息
             if (info.getRecorderStatistics() != null) {
                 RecorderStatistics stats = info.getRecorderStatistics();
-                log.debug("访问记录模块详细统计:");
+                log.info("访问记录模块详细统计:");
                 if (stats.getPromotionQueue() != null) {
                     RecorderStatistics.ComponentStatistics pq = stats.getPromotionQueue();
-                    log.debug("  PromotionQueue: 大小={}, 内存={} bytes, 平均key长度={}", 
+                    log.info("  PromotionQueue: 大小={}, 内存={} bytes, 平均key长度={}",
                             pq.getSize(), pq.getMemorySize(), pq.getAvgKeyLength());
                 }
                 if (stats.getRecentQps() != null) {
                     RecorderStatistics.ComponentStatistics rq = stats.getRecentQps();
-                    log.debug("  RecentQps: 大小={}, 内存={} bytes, 平均key长度={}", 
+                    log.info("  RecentQps: 大小={}, 内存={} bytes, 平均key长度={}",
                             rq.getSize(), rq.getMemorySize(), rq.getAvgKeyLength());
                 }
                 int totalSize = (stats.getPromotionQueue() != null ? stats.getPromotionQueue().getSize() : 0) 
                         + (stats.getRecentQps() != null ? stats.getRecentQps().getSize() : 0);
                 long totalMemorySize = (stats.getPromotionQueue() != null ? stats.getPromotionQueue().getMemorySize() : 0L) 
                         + (stats.getRecentQps() != null ? stats.getRecentQps().getMemorySize() : 0L);
-                log.debug("  总计: 大小={}, 内存={} bytes", totalSize, totalMemorySize);
+                log.info("  总计: 大小={}, 内存={} bytes", totalSize, totalMemorySize);
             }
-            log.debug("wrapGet总调用次数: {}", info.getTotalWrapGetCount());
-            log.debug("wrapGet的QPS: {}", formatDouble(info.getWrapGetQps()));
-            log.debug("每秒访问的不同key数量: {}", formatDouble(info.getKeysPerSecond()));
-            log.debug("热Key访问总次数: {}", info.getHotKeyAccessCount());
-            log.debug("热Key访问QPS: {}", formatDouble(info.getHotKeyAccessQps()));
-            log.debug("热Key缓存命中次数: {}", info.getHotKeyHitCount());
-            log.debug("热Key访问命中QPS: {}", formatDouble(info.getHotKeyHitQps()));
-            log.debug("热Key缓存未命中次数: {}", info.getHotKeyMissCount());
-            log.debug("热Key访问未命中QPS: {}", formatDouble(info.getHotKeyMissQps()));
-            log.debug("热Key命中率: {}%", formatDouble(info.getHotKeyHitRate() * 100));
-            log.debug("热Key流量占比: {}%", formatDouble(info.getHotKeyTrafficRatio() * 100));
+            log.info("wrapGet总调用次数: {}", info.getTotalWrapGetCount());
+            log.info("wrapGet的QPS: {}", formatDouble(info.getWrapGetQps()));
+            log.info("每秒访问的不同key数量: {}", formatDouble(info.getKeysPerSecond()));
+            log.info("热Key访问总次数: {}", info.getHotKeyAccessCount());
+            log.info("热Key访问QPS: {}", formatDouble(info.getHotKeyAccessQps()));
+            log.info("热Key缓存命中次数: {}", info.getHotKeyHitCount());
+            log.info("热Key访问命中QPS: {}", formatDouble(info.getHotKeyHitQps()));
+            log.info("热Key缓存未命中次数: {}", info.getHotKeyMissCount());
+            log.info("热Key访问未命中QPS: {}", formatDouble(info.getHotKeyMissQps()));
+            log.info("热Key命中率: {}%", formatDouble(info.getHotKeyHitRate() * 100));
+            log.info("热Key流量占比: {}%", formatDouble(info.getHotKeyTrafficRatio() * 100));
             log.info("====================================");
         } catch (Exception e) {
             log.error("监控失败", e);
