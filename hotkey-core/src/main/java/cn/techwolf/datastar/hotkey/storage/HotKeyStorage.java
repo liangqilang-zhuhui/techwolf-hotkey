@@ -22,12 +22,20 @@ import java.util.function.Function;
  * 2. 管理数据获取回调函数注册表
  * 3. 定时刷新热Key数据，保证数据新鲜度
  * 4. 过期时间可配置（默认60分钟）
+ * 5. 支持null值缓存（使用特殊标记值）
  *
  * @author techwolf
  * @date 2024
  */
 @Slf4j
 public class HotKeyStorage implements IHotKeyStorage {
+
+    /**
+     * null值的特殊标记
+     * 使用特殊前缀，确保不会与真实数据冲突
+     * Caffeine cache不允许null值，因此使用此标记值表示null
+     */
+    private static final String NULL_VALUE_MARKER = "__HOTKEY_NULL__";
 
     private final Cache<String, String> cache;
     private final ConcurrentHashMap<String, Function<String, String>> registryUpdateKeys;
@@ -72,7 +80,18 @@ public class HotKeyStorage implements IHotKeyStorage {
             return null;
         }
         try {
-            return cache.getIfPresent(key);
+            String value = cache.getIfPresent(key);
+            if (value == null) {
+                // 缓存未命中
+                return null;
+            }
+            // 检查是否为null标记值
+            if (NULL_VALUE_MARKER.equals(value)) {
+                // 这是缓存的null值，返回null
+                return null;
+            }
+            // 返回实际值
+            return value;
         } catch (Exception e) {
             log.debug("从数据存储获取数据失败, key: {}", key, e);
             return null;
@@ -80,12 +99,15 @@ public class HotKeyStorage implements IHotKeyStorage {
     }
 
     @Override
-    public void put(String key, String value,Function<String, String> dataGetter) {
-        if (key == null || value == null) {
+    public void put(String key, String value, Function<String, String> dataGetter) {
+        if (key == null) {
             return;
         }
         try {
-            cache.put(key, value);
+            // 更新缓存值（处理null值转换和存储）
+            updateCacheValue(key, value);
+            
+            // 注册回调函数
             Function<String, String> previous = registryUpdateKeys.putIfAbsent(key, dataGetter);
             if (previous == null) {
                 // 成功注册（首次注册）
@@ -93,6 +115,30 @@ public class HotKeyStorage implements IHotKeyStorage {
             }
         } catch (Exception e) {
             log.debug("写入数据存储失败, key: {}", key, e);
+        }
+    }
+
+    /**
+     * 更新缓存值（内部方法）
+     * 处理null值转换、存储到cache、记录日志
+     *
+     * @param key Redis key
+     * @param value 要缓存的值（可能为null）
+     */
+    private void updateCacheValue(String key, String value) {
+        if (key == null) {
+            return;
+        }
+        try {
+            // null值处理：存储标记值
+            String cacheValue = (value == null) ? NULL_VALUE_MARKER : value;
+            cache.put(key, cacheValue);
+            
+            if (value == null) {
+                log.debug("更新缓存为null值标记, key: {}", key);
+            }
+        } catch (Exception e) {
+            log.warn("更新缓存失败, key: {}", key, e);
         }
     }
 
@@ -141,18 +187,8 @@ public class HotKeyStorage implements IHotKeyStorage {
             return;
         }
         
-        // 检查新值是否为null（Caffeine cache不允许null值）
-        if (newValue == null) {
-            log.debug("刷新热Key失败, 数据源返回null值, key: {}", key);
-            return;
-        }
-        
-        // 刷新成功，更新缓存
-        try {
-            cache.put(key, newValue);
-        } catch (Exception e) {
-            log.warn("更新缓存失败, key: {}", key, e);
-        }
+        // 更新缓存值（处理null值转换和存储）
+        updateCacheValue(key, newValue);
     }
 
     public void remove(String key) {
@@ -196,6 +232,37 @@ public class HotKeyStorage implements IHotKeyStorage {
         } catch (Exception e) {
             log.debug("获取数据存储大小失败", e);
             return 0;
+        }
+    }
+
+    /**
+     * 获取热Key的值（带命中状态）
+     * 一次查询返回命中状态和值，避免多次查询cache
+     *
+     * @param key Redis key
+     * @return 缓存获取结果，包含命中状态和值
+     */
+    @Override
+    public CacheGetResult getWithHit(String key) {
+        if (key == null) {
+            return new CacheGetResult(false, null);
+        }
+        try {
+            String cacheValue = cache.getIfPresent(key);
+            if (cacheValue == null) {
+                // 缓存未命中
+                return new CacheGetResult(false, null);
+            }
+            // 检查是否为null标记值
+            if (NULL_VALUE_MARKER.equals(cacheValue)) {
+                // 这是缓存的null值，命中但值为null
+                return new CacheGetResult(true, null);
+            }
+            // 返回实际值，命中且值非null
+            return new CacheGetResult(true, cacheValue);
+        } catch (Exception e) {
+            log.debug("从数据存储获取数据失败, key: {}", key, e);
+            return new CacheGetResult(false, null);
         }
     }
 

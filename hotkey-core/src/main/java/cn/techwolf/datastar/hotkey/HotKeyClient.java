@@ -10,11 +10,11 @@ import cn.techwolf.datastar.hotkey.core.IHotKeyManager;
 import cn.techwolf.datastar.hotkey.recorder.IAccessRecorder;
 import cn.techwolf.datastar.hotkey.scheduler.IScheduler;
 import cn.techwolf.datastar.hotkey.storage.IHotKeyStorage;
+import cn.techwolf.datastar.hotkey.storage.CacheGetResult;
 import cn.techwolf.datastar.hotkey.monitor.HotKeyMonitor;
 import cn.techwolf.datastar.hotkey.monitor.IHotKeyMonitor;
 import cn.techwolf.datastar.hotkey.monitor.HitRateStatistics;
 import cn.techwolf.datastar.hotkey.monitor.IHitRateStatistics;
-import cn.techwolf.datastar.hotkey.storage.HotKeyStorage;
 
 import java.util.function.Function;
 
@@ -184,14 +184,14 @@ public class HotKeyClient implements IHotKeyClient {
         if (isHot) {
             // 记录热Key访问
             hitRateStatistics.recordHotKeyAccess();
-            // 从缓存获取（再次检查是否为热Key，避免在检查后被降级导致的竞态条件）
-            String cachedValue = getFromCache(key);
-            if (cachedValue != null) {
-                // 记录热Key缓存命中
+            // 从缓存获取（带命中状态），一次查询获取完整信息，避免多次查询cache
+            CacheGetResult cacheResult = getFromCacheWithHit(key);
+            if (null!=cacheResult&&cacheResult.isHit()) {
+                // 缓存命中（包括null值和非null值）
                 hitRateStatistics.recordHotKeyHit();
-                return cachedValue;
+                return cacheResult.getValue();
             } else {
-                // 记录热Key缓存未命中
+                // 缓存未命中
                 hitRateStatistics.recordHotKeyMiss();
             }
         }
@@ -199,12 +199,12 @@ public class HotKeyClient implements IHotKeyClient {
         // 4. 缓存未命中或key已被降级，从Redis获取值
         String value = redisGetter != null ? redisGetter.apply(key) : null;
         
-        // 5. 如果从Redis获取到值，且是热Key，更新本地缓存
+        // 5. 如果从Redis获取到值（包括null），且是热Key，更新本地缓存
         // 再次检查是否为热Key（可能在获取Redis数据期间被降级）
-        if (value != null && isHotKey(key)) {
-            hotKeyStorage.put(key, value, redisGetter);
+        if (isHotKey(key)) {
+            hotKeyStorage.put(key, value, redisGetter); // value可能为null
             if (log.isDebugEnabled()) {
-                log.debug("更新本地缓存完成, key: {}", key);
+                log.debug("更新本地缓存完成, key: {}, value: {}", key, value != null ? "非null" : "null");
             }
         }
         return value;
@@ -219,18 +219,18 @@ public class HotKeyClient implements IHotKeyClient {
     }
 
     /**
-     * 从缓存获取值（内部方法，不检查是否为热Key）
+     * 从缓存获取值（带命中状态）（内部方法，不检查是否为热Key）
      * 注意：调用此方法前需要确保key是热Key
      *
      * @param key Redis key
-     * @return 缓存值，如果未命中返回null
+     * @return 缓存获取结果，包含命中状态和值
      */
-    private String getFromCache(String key) {
+    private CacheGetResult getFromCacheWithHit(String key) {
         if (!enabled || key == null) {
-            return null;
+            return new CacheGetResult(false, null);
         }
         // 直接获取，不重复检查是否为热Key（调用方已检查）
-        return hotKeyStorage.get(key);
+        return hotKeyStorage.getWithHit(key);
     }
 
 

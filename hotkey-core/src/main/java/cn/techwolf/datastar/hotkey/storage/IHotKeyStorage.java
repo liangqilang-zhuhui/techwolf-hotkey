@@ -41,6 +41,16 @@ public interface IHotKeyStorage {
      */
     long size();
 
+
+    /**
+     * 获取热Key的值（带命中状态）
+     * 一次查询返回命中状态和值，避免多次查询cache
+     *
+     * @param key Redis key
+     * @return 缓存获取结果，包含命中状态和值
+     */
+    CacheGetResult getWithHit(String key);
+
     void shutdown();
 
 }

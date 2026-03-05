@@ -103,12 +103,15 @@ HotKeyClient (协调者)
 4. 判断是否为热Key
 5. 如果是热Key：
    - 记录热Key访问统计
-   - 注册redisGetter到注册表（用于自动刷新，使用putIfAbsent保证原子操作）
    - 先从本地缓存获取值
-   - 缓存命中则记录命中统计并直接返回
-   - 缓存未命中则记录未命中统计并继续
-6. 从Redis获取数据（调用redisGetter）
-7. 如果从Redis获取到值，且是热Key，更新本地缓存
+   - 判断缓存状态：
+     - 如果 `isNullValue(key) == true`：明确知道缓存了null值，记录命中统计并直接返回null，不需要查Redis
+     - 如果 `get(key) != null`：缓存了非null值，记录命中统计并直接返回
+     - 如果 `get(key) == null && isNullValue(key) == false`：缓存未命中，记录未命中统计并继续
+   - 注册redisGetter到注册表（用于自动刷新，使用putIfAbsent保证原子操作）
+6. 缓存未命中时，从Redis获取数据（调用redisGetter）
+7. 如果从Redis获取到值（包括null），且是热Key，更新本地缓存
+   - null值会使用特殊标记值存储，非null值直接存储
 8. 返回数据给客户端
 
 **关键点**：
@@ -117,6 +120,7 @@ HotKeyClient (协调者)
 - 热Key的redisGetter会自动注册到注册表
 - 所有统计和缓存操作都是异步的，不阻塞主流程
 - 使用原子操作保证并发安全
+- **null值处理**：热空key（Redis返回null的key）也会被缓存，使用特殊标记值表示，避免持续miss
 
 ### 3.2 写操作流程
 
@@ -258,6 +262,7 @@ HotKeyClient (协调者)
 - 管理数据获取回调函数注册表（registryUpdateKeys）
 - 定时刷新热Key数据，保证数据新鲜度
 - 过期时间可配置（默认60分钟）
+- **支持null值缓存**：使用特殊标记值处理热空key（Redis返回null的key）
 
 **关键特性**：
 - 使用Caffeine实现高性能本地缓存
@@ -266,6 +271,7 @@ HotKeyClient (协调者)
 - **数据刷新**：自己负责定时刷新，属于职责范围内的事情
 - **注册表管理**：存储每个热Key对应的数据获取回调函数
 - **异常隔离**：单个key刷新失败不影响其他key
+- **null值处理**：使用特殊标记值（`__HOTKEY_NULL__`）表示null值，复用Cache数据结构，避免引入额外数据结构
 
 ### 4.4 AccessRecorder（模块三）
 
@@ -427,7 +433,7 @@ HotKeyClient (协调者)
 ### 6.2 缓存策略
 
 **缓存时机**：
-- 读操作触发：当从Redis获取数据后，如果判断为热Key，自动写入本地缓存
+- 读操作触发：当从Redis获取数据后，如果判断为热Key，自动写入本地缓存（包括null值）
 - 写操作触发：当写入Redis后，如果是热Key，异步更新本地缓存
 
 **缓存更新**：
@@ -439,6 +445,24 @@ HotKeyClient (协调者)
 - 容量限制：达到最大容量时，使用LRU策略淘汰最少使用的key
 - 时间过期：写入后60秒自动过期
 - 降级清理：热Key被降级时，从缓存中移除
+
+**null值处理机制**：
+- **问题背景**：Caffeine cache不允许null值，但热空key（Redis返回null的key）也需要缓存，避免持续miss
+- **解决方案**：使用特殊标记值 `__HOTKEY_NULL__` 表示null值，直接存储在Cache中
+- **实现方式**：
+  - `put()` 时：如果value为null，存储标记值；否则存储实际值
+  - `get()` 时：如果获取到标记值，返回null；如果获取到实际值，返回实际值；如果未命中，返回null
+  - `isNullValue()` 方法：明确判断key是否已缓存null值，用于区分"缓存了null"和"缓存未命中"
+- **优势**：
+  - 零额外数据结构：完全复用Cache，无需引入ConcurrentHashMap
+  - 逻辑简单：只需在get/put时做标记值转换
+  - 线程安全：依赖Caffeine Cache的线程安全保证
+  - 自动过期：标记值随Cache的过期策略自动过期
+  - 降级清理：remove()和retainAll()自动清理标记值，无需特殊处理
+- **状态区分**：
+  - `isNullValue(key) == true`：明确知道缓存了null值，直接返回null，不需要查Redis
+  - `get(key) != null`：缓存了非null值，直接返回
+  - `get(key) == null && isNullValue(key) == false`：缓存未命中，需要查Redis
 
 ### 6.3 刷新机制
 
