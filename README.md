@@ -56,14 +56,14 @@ hotkey:
     interval: 60000                        # 监控输出间隔（毫秒），默认60000（60秒）
 ```
 
-精简版
+精简版（适用于低QPS场景，阈值需根据实际情况调整）
 ```
 hotkey:
   enabled: true                          # 是否启用热Key检测，默认true
   detection:
     top-n: 20                             # Top N数量，默认20
-    hot-key-qps-threshold: 50            # 热Key QPS阈值（次/秒），默认500
-    warm-key-qps-threshold: 10           # 温Key QPS阈值（次/秒），默认200
+    hot-key-qps-threshold: 50            # 热Key QPS阈值（次/秒），根据场景调整，默认500
+    warm-key-qps-threshold: 10           # 温Key QPS阈值（次/秒），根据场景调整，默认200
   recorder:
     max-capacity: 500000                 # 访问记录最大容量，默认100000
 ```
@@ -171,8 +171,6 @@ client.shutdown();
 | `getStorageSize()` | long | 数据存储层大小 |
 | `getRecorderSize()` | int | 访问记录模块的数据量 |
 | `getRecorderMemorySize()` | long | 访问记录模块的内存大小（字节） |
-| `getUpdaterSize()` | int | 缓存数据更新器注册表的数据量 |
-| `getUpdaterMemorySize()` | long | 缓存数据更新器注册表的内存大小（字节） |
 | `getTotalWrapGetCount()` | long | wrapGet总调用次数 |
 | `getWrapGetQps()` | double | wrapGet的QPS（每秒请求数） |
 | `getKeysPerSecond()` | double | 每秒访问的不同key数量 |
@@ -228,9 +226,7 @@ String json = mBean.getMonitorInfoJson();
 - `hotKeyCount`: 热Key数量
 - `storageSize`: 数据存储层大小
 - `recorderSize`: 访问记录模块的数据量
-- `recorderMemorySize`: 访问记录模块的内存大小（估算，单位：字节）
-- `updaterSize`: 缓存数据更新器注册表的数据量
-- `updaterMemorySize`: 缓存数据更新器注册表的内存大小（估算，单位：字节）
+- `recorderStatistics`: 访问记录模块的详细统计信息（包含PromotionQueue和RecentQps的大小、内存使用等）
 - `totalWrapGetCount`: wrapGet总调用次数
 - `wrapGetQps`: wrapGet的QPS（每秒请求数）
 - `keysPerSecond`: 每秒访问的不同key数量
@@ -239,6 +235,9 @@ String json = mBean.getMonitorInfoJson();
 - `hotKeyMissCount`: 热Key缓存未命中次数
 - `hotKeyHitRate`: 热Key命中率（0.0-1.0）
 - `hotKeyTrafficRatio`: 热Key流量占比（0.0-1.0）
+- `hotKeyAccessQps`: 热Key访问QPS
+- `hotKeyHitQps`: 热Key访问命中QPS
+- `hotKeyMissQps`: 热Key访问未命中QPS
 
 ## 使用场景
 
@@ -320,24 +319,24 @@ String json = mBean.getMonitorInfoJson();
 
 ### 模块架构
 
-系统采用6个核心模块的架构设计：
+系统采用5个核心模块的架构设计：
 
 - **模块一：热Key管理器（Manager）**：维护和管理热Key列表，判断是否热key
-- **模块二：数据存储（Storage）**：使用Caffeine存储热key的value
-- **模块三：访问记录（Recorder）**：记录所有key的访问统计，计算QPS
+- **模块二：数据存储（Storage）**：使用Caffeine存储热key的value，管理数据获取回调函数注册表，定时刷新热Key数据
+- **模块三：访问记录（Recorder）**：记录key的访问统计，计算QPS，使用待晋升队列过滤低流量key
 - **模块四：选择器（Selector）**：根据访问统计选择哪些key应该晋升或降级
 - **模块五：监控器（Monitor）**：监控热key列表、数据存储层大小、访问记录模块数据量，提供命中率统计
-- **模块六：缓存数据更新器（Updater）**：存储数据获取回调函数，定时刷新热Key数据
 
-### 智能采样机制
+### 访问记录过滤机制
 
-为了降低内存占用，系统实现了智能采样机制：
+为了降低内存占用，系统实现了待晋升队列机制：
 
-- **低频率key采样**：QPS < 10的key按10%的比例采样记录
-- **快速准入**：QPS >= 50的key直接准入，不进行采样
-- **强制准入**：被采样拒绝10000次后强制准入，避免高频率key因采样被拒绝
-- **一致性采样**：使用key的hash值进行采样，保证同一个key的采样结果一致
-- **动态调整**：容量使用率低于50%时，采样率提高2倍
+- **待晋升队列（recentQpsTable）**：使用轻量级ConcurrentHashMap<String, Integer>存储待晋升key的访问次数
+- **晋升队列（promotionQueue）**：存储通过阈值筛选的key的完整QPS统计信息
+- **准入阈值**：只有访问次数达到阈值的key才能从待晋升队列升级到晋升队列
+  - 计算公式：promotionQueueThreshold = max(100, warmKeyThreshold * promotionInterval / 1000)
+  - 目的：过滤极低流量的key，减少内存占用
+- **自动清理**：定期清理过期和低QPS的key，保留80%的容量
 
 ### 性能优化
 
@@ -434,14 +433,15 @@ System.out.println("命中率: " + info.getHotKeyHitRate());
 - ✅ 实现热Key检测机制（滑动窗口、TopN计算）
 - ✅ 实现本地Caffeine缓存（60分钟过期，最大2000个key）
 - ✅ 实现自动刷新机制（每10秒刷新一次热Key数据）
-- ✅ 实现智能采样机制（降低低频率key的内存占用）
-- ✅ 实现自动淘汰机制（时间过期、容量限制、降级移除）
+- ✅ 实现待晋升队列过滤机制（降低低频率key的内存占用）
+- ✅ 实现自动淘汰机制（时间过期、降级移除）
 - ✅ 实现Spring Boot Starter自动配置
 - ✅ 实现监控和日志（每60秒输出监控信息）
-- ✅ 实现6个核心模块的架构设计（Manager、Storage、Recorder、Selector、Monitor、Updater）
+- ✅ 实现5个核心模块的架构设计（Manager、Storage、Recorder、Selector、Monitor）
 - ✅ 实现命中率统计功能（QPS、命中率、流量占比等）
 - ✅ 实现JMX监控支持（通过JConsole、VisualVM查看）
 - ✅ 性能优化：CAS无锁算法、原子操作优化、内存优化
+- ✅ 支持热空Key缓存（使用特殊标记值处理Redis返回null的key）
 
 ## 许可证
 

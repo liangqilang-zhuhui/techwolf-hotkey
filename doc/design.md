@@ -156,12 +156,12 @@ HotKeyClient (协调者)
 
 **完整流程**：
 
-1. 定时任务启动（每10秒执行一次，可配置）
+1. 定时任务启动（每5秒执行一次，由promotionInterval配置控制，默认5000ms）
 2. SchedulerManager从HotKeyManager获取当前热Key列表
 3. SchedulerManager调用HotKeySelector.promoteHotKeys(currentHotKeys)
 4. HotKeySelector计算应该晋升的key：
    - 从AccessRecorder获取所有访问统计
-   - 过滤：QPS >= 热Key阈值（默认1000）
+   - 过滤：QPS >= 热Key阈值（默认500）
    - 排序：按QPS降序
    - 取TopN：limit(topN，默认20)
    - 排除已经是热Key的，返回新晋升的key集合
@@ -180,13 +180,12 @@ HotKeyClient (协调者)
 
 **完整流程**：
 
-1. 定时任务启动（每30秒执行一次，可配置）
+1. 定时任务启动（每20次晋升任务执行1次降级，若promotionInterval=5000ms，则约每100秒执行一次）
 2. SchedulerManager从HotKeyManager获取当前热Key列表
 3. SchedulerManager调用HotKeySelector.demoteAndEvict(currentHotKeys)
 4. HotKeySelector计算应该降级的key：
    - 从AccessRecorder获取所有访问统计
-   - 检查热key中访问小于阈值的，返回应该移除的key集合
-   - 如果容量超限，计算需要淘汰的key（但保留热key）
+   - 检查热key中访问小于热Key阈值的（默认500），返回应该移除的key集合
 5. SchedulerManager调用HotKeyManager.demoteHotKeys(removedKeys)
 6. HotKeyManager更新热Key列表（使用synchronized保证原子性，volatile Set保证可见性）
 7. HotKeyManager调用HotKeyStorage.retainAll()清理被降级key的缓存和注册表
@@ -276,32 +275,32 @@ HotKeyClient (协调者)
 ### 4.4 AccessRecorder（模块三）
 
 **职责**：
-- 记录所有key的访问统计
+- 记录key的访问统计
 - 计算QPS（每秒访问量）
-- 区分温、热key：
-  - 冷key：QPS < 500
-  - 温key：QPS >= 500 且 < 3000
-  - 热key：QPS >= 3000
+- 使用待晋升队列过滤机制，降低内存占用：
+  - 待晋升队列（recentQpsTable）：轻量级存储待晋升key的访问次数
+  - 晋升队列（promotionQueue）：存储通过阈值筛选的key的完整QPS统计
+  - 准入阈值：只有访问次数达到阈值的key才能升级到晋升队列
 
 **关键特性**：
 - 使用滑动窗口算法计算QPS
 - 使用LongAdder提高并发性能
 - 使用ConcurrentHashMap存储访问统计，线程安全
 - 自动清理过期和低QPS的key，保留80%的容量
+- QPS衰减策略：窗口过期后使用延迟重置和衰减计算，避免抖动
 
 ### 4.6 HotKeySelector（模块四）
 
 **职责**：
-1. **计算应该晋升的热Key**（每5秒执行一次）：
+1. **计算应该晋升的热Key**（每5秒执行一次，由promotionInterval配置控制）：
    - 从AccessRecorder获取所有访问统计
-   - 筛选QPS >= 3000的key
-   - 按QPS降序排序，取Top 10
+   - 筛选QPS >= 热Key阈值（默认500）的key
+   - 按QPS降序排序，取Top N（默认20）
    - 排除已经是热Key的，返回新晋升的key集合
 
-2. **计算应该降级的热Key**（每分钟执行一次）：
+2. **计算应该降级的热Key**（每20次晋升任务执行1次）：
    - 根据当前热Key列表和访问统计
-   - 计算热key中QPS < 3000的，返回应该移除的key集合
-   - 如果容量超限，计算需要淘汰的key（但保留热key）
+   - 计算热key中QPS < 热Key阈值（默认500）的，返回应该移除的key集合
 
 **关键特性**：
 - 无状态设计：只负责计算和选择，不维护热Key列表
@@ -377,25 +376,23 @@ HotKeyClient (协调者)
 ### 5.1 热Key检测配置
 
 - `enabled`: 是否启用热Key检测
-- `window-size`: 统计窗口大小（秒），默认10
-- `top-n`: Top N数量，默认10
-- `hot-key-qps-threshold`: 热Key QPS阈值（次/秒），默认3000.0
-- `warm-key-qps-threshold`: 温Key QPS阈值（次/秒），默认500.0
+- `top-n`: Top N数量，默认20
+- `hot-key-qps-threshold`: 热Key QPS阈值（次/秒），默认500.0
+- `warm-key-qps-threshold`: 温Key QPS阈值（次/秒），默认200.0
 - `promotion-interval`: 晋升间隔（毫秒），默认5000（5秒）
-- `demotion-interval`: 降级间隔（毫秒），默认60000（60秒）
+- 注意：降级任务每20次晋升任务执行1次（约每100秒，若promotionInterval=5000ms）
 
 ### 5.2 本地缓存配置
 
 - `enabled`: 是否启用本地缓存，默认true
-- `maximum-size`: 最大缓存数量，默认200
+- `maximum-size`: 最大缓存数量，默认2000（TOP_N * 100）
 - `expire-after-write`: 写入后过期时间（分钟），默认60
-- `record-stats`: 是否记录统计信息，默认true
 
 ### 5.3 访问记录配置
 
 - `max-capacity`: 访问记录最大容量，默认100000
 - `window-size`: 统计窗口大小（秒），默认10
-- `inactive-expire-time`: 非活跃key过期时间（秒），默认300
+- `inactive-expire-time`: 非活跃key过期时间（秒），默认120
 
 ### 5.4 自动刷新配置
 
@@ -421,14 +418,14 @@ HotKeyClient (协调者)
 ### 6.1 热Key判定标准
 
 **热Key判定标准**（必须同时满足）：
-1. **QPS阈值**：访问频率 >= 3000次/秒
-2. **Top N排名**：访问频率排名在前N位（默认N=10）
+1. **QPS阈值**：访问频率 >= 热Key阈值（默认500次/秒，可配置）
+2. **Top N排名**：访问频率排名在前N位（默认N=20，可配置）
 
 **温Key判定标准**：
-- QPS >= 500 且 < 3000
+- QPS >= 温Key阈值（默认200次/秒，可配置）且 < 热Key阈值
 
 **冷Key判定标准**：
-- QPS < 500
+- QPS < 温Key阈值（默认200次/秒）
 
 ### 6.2 缓存策略
 
@@ -443,7 +440,7 @@ HotKeyClient (协调者)
 
 **缓存淘汰**：
 - 容量限制：达到最大容量时，使用LRU策略淘汰最少使用的key
-- 时间过期：写入后60秒自动过期
+- 时间过期：写入后60分钟自动过期
 - 降级清理：热Key被降级时，从缓存中移除
 
 **null值处理机制**：
@@ -528,13 +525,13 @@ HotKeyClient (协调者)
 ```
 SchedulerManager (统一调度器)
 ├── HotKey-Scheduler 线程池（3个线程）
-│   ├── 晋升任务（10秒间隔）
-│   └── 降级任务（30秒间隔）
+│   ├── 晋升任务（由promotionInterval控制，默认5秒间隔）
+│   └── 降级任务（每20次晋升任务执行1次，约每100秒）
 └── 顺序执行，避免竞争
 
 HotKeyStorage (数据存储)
 ├── HotKey-Storage-Updater-Scheduler 线程池（3个线程）
-│   └── 刷新任务（10秒间隔）
+│   └── 刷新任务（由refresh.interval控制，默认10秒间隔）
 └── 独立管理，职责清晰
 ```
 
@@ -560,10 +557,10 @@ HotKeyStorage (数据存储)
 
 ### 7.2 空间复杂度
 
-- 本地缓存：O(m) - m为热Key数量（默认最多200个）
+- 本地缓存：O(m) - m为热Key数量（默认最多2000个）
 - 访问记录：O(n) - n为访问的key数量（默认最多100000个）
-- 注册表：O(k) - k为热Key数量
 - 命中率统计：O(w) - w为窗口内的key数量（最多100000个）
+- 待晋升队列：O(p) - p为待晋升key数量（默认最多1000000个）
 
 ### 7.3 并发性能
 
@@ -644,7 +641,7 @@ HotKeyStorage (数据存储)
 
 3. **刷新频率**：
    - 刷新间隔需要根据业务需求调整，过短会增加Redis压力，过长会导致数据不新鲜
-   - **重要**：刷新间隔应小于`expire-after-write`，确保在缓存过期前刷新
+   - **重要**：`refresh.interval`（毫秒）应小于`expire-after-write`（分钟）* 60000，确保在缓存过期前刷新
 
 4. **配置调优**：
    - 根据实际业务场景调整各项配置参数，达到最佳性能
