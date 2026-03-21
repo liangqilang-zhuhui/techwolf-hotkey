@@ -49,20 +49,8 @@ public class HotKeyManager implements IHotKeyManager {
      * 使用有界队列和拒绝策略，防止OOM
      * 注意：使用静态线程池，所有实例共享，避免创建过多线程池
      */
-    private static final AtomicInteger threadCounter = new AtomicInteger(0);
-    private static final ExecutorService asyncExecutor = new ThreadPoolExecutor(
-            100, 1000, 60L, TimeUnit.SECONDS,
-            new LinkedBlockingQueue<>(10000),
-            new ThreadFactory() {
-                @Override
-                public Thread newThread(Runnable r) {
-                    Thread t = new Thread(r, "HotKey-Async-" + threadCounter.incrementAndGet());
-                    t.setDaemon(true);
-                    return t;
-                }
-            },
-            new ThreadPoolExecutor.CallerRunsPolicy()
-    );
+    private  AtomicInteger threadCounter = new AtomicInteger(0);
+    private  ExecutorService asyncExecutor;
 
     /**
      * 构造函数
@@ -77,6 +65,19 @@ public class HotKeyManager implements IHotKeyManager {
         this.accessRecorder = accessRecorder;
         this.hotKeyStorage = hotKeyStorage;
         this.hotKeys = Collections.emptySet();
+        asyncExecutor =new ThreadPoolExecutor(
+                100, 1000, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(10000),
+                new ThreadFactory() {
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        Thread t = new Thread(r, "HotKey-Async-" + threadCounter.incrementAndGet());
+                        t.setDaemon(true);
+                        return t;
+                    }
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 
     @Override
@@ -141,4 +142,19 @@ public class HotKeyManager implements IHotKeyManager {
         }
     }
 
+    @Override
+    public void shutdown() {
+        if (asyncExecutor != null && !asyncExecutor.isShutdown()) {
+            asyncExecutor.shutdown();
+            try {
+                if (!asyncExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    asyncExecutor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                asyncExecutor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+            log.info("热Key管理器已关闭");
+        }
+    }
 }

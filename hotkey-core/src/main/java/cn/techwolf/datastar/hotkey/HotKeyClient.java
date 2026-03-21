@@ -158,6 +158,10 @@ public class HotKeyClient implements IHotKeyClient {
         if (scheduler != null) {
             scheduler.stop();
         }
+        // 关闭热Key管理器，释放异步执行线程池资源
+        if (hotKeyManager != null) {
+            hotKeyManager.shutdown();
+        }
         // 关闭数据存储，释放刷新线程池资源
         if (hotKeyStorage != null) {
             hotKeyStorage.shutdown();

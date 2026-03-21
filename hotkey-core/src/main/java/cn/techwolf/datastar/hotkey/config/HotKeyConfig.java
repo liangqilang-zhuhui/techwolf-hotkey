@@ -55,7 +55,7 @@ public class HotKeyConfig {
          * 热Key访问频率阈值（次/秒）
          * 只有QPS >= 1000的key才能成为热Key
          */
-        private double hotKeyQpsThreshold = HotKeyConfigDefaults.Detection.HOT_KEY_QPS_THRESHOLD;
+        private int hotKeyQpsThreshold = HotKeyConfigDefaults.Detection.HOT_KEY_QPS_THRESHOLD;
 
         /**
          * 温Key访问频率阈值（次/秒）

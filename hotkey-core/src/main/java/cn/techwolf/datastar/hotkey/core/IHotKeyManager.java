@@ -51,4 +51,10 @@ public interface IHotKeyManager {
      * @param removedKeys 被移除的热Key集合
      */
     void demoteHotKeys(Set<String> removedKeys);
+
+    /**
+     * 关闭管理器，释放资源
+     * 停止异步执行线程池
+     */
+    void shutdown();
 }
